@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<title>Teste isolado do parser de fatura</title>
+<style>
+  body{ font-family: -apple-system, sans-serif; max-width: 700px; margin: 20px auto; padding: 0 12px; }
+  input[type=file]{ margin: 12px 0; }
+  table{ border-collapse: collapse; width: 100%; font-size: 0.85rem; }
+  td, th{ border-bottom: 1px solid #ddd; padding: 4px 6px; text-align: left; }
+  .ok{ color: #2a7a2a; font-weight: 600; }
+  .fail{ color: #a33; font-weight: 600; }
+  pre{ background: #f4f4f4; padding: 10px; overflow-x: auto; font-size: 0.75rem; }
+</style>
+</head>
+<body>
+<h1>Teste isolado do parser de fatura (PDF.js)</h1>
+<p>Ferramenta pra conferir manualmente, num navegador de verdade, se o <code>src/pdf-parser.js</code> está lendo
+uma fatura corretamente — sem precisar abrir o app inteiro. Escolha um PDF de fatura Santander:</p>
+<input type="file" id="file" accept="application/pdf">
+<div id="output"></div>
+
+<script type="module">
+  import { parseFaturaPdf } from '../src/pdf-parser.js';
+
+  document.getElementById('file').addEventListener('change', async (ev) => {
+    const file = ev.target.files[0];
+    if (!file) return;
+    const out = document.getElementById('output');
+    out.innerHTML = '<p>Processando…</p>';
+    try {
+      const buf = await file.arrayBuffer();
+      const t0 = performance.now();
+      const result = await parseFaturaPdf(buf, file.name);
+      const ms = Math.round(performance.now() - t0);
+
+      let html = `<p>Vencimento: <b>${result.vencimento}</b> · ${result.rows.length} lançamentos · ${ms}ms</p>`;
+      html += `<p class="${result.checksum.ok ? 'ok' : 'fail'}">Checksum: ${result.checksum.ok ? 'OK — bate com a fatura' : 'FALHOU — confira os valores'}</p>`;
+      html += '<table><tr><th>Cartão</th><th>Esperado</th><th>Calculado</th><th>Status</th></tr>';
+      result.checksum.sections.forEach((s) => {
+        html += `<tr><td>${s.cardEnding}</td><td>${s.expected.toFixed(2)}</td><td>${s.computed.toFixed(2)}</td><td class="${s.ok ? 'ok' : 'fail'}">${s.ok ? 'OK' : 'FALHOU'}</td></tr>`;
+      });
+      html += '</table>';
+
+      if (result.warnings.length) {
+        html += '<h3>Avisos</h3><pre>' + result.warnings.map((w) => w.replace(/</g, '&lt;')).join('\n') + '</pre>';
+      }
+
+      html += '<h3>Lançamentos</h3><table><tr><th>Data</th><th>Descrição</th><th>Parcela</th><th>Valor</th><th>Cartão</th></tr>';
+      result.rows.forEach((r) => {
+        html += `<tr><td>${r.data}</td><td>${r.descricao.replace(/</g, '&lt;')}</td><td>${r.parcela_atual ? r.parcela_atual + '/' + r.parcela_total : ''}</td><td>${r.valor.toFixed(2)}</td><td>${r.cardEnding}</td></tr>`;
+      });
+      html += '</table>';
+      out.innerHTML = html;
+    } catch (e) {
+      out.innerHTML = `<p class="fail">Erro: ${e.message}</p>`;
+      console.error(e);
+    }
+  });
+</script>
+</body>
+</html>

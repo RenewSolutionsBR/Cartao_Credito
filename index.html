@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Livro de Gastos</title>
+<meta name="description" content="Controle de gastos e conciliação de fatura de cartão, com dados salvos só no seu celular.">
+<meta name="theme-color" content="#1B2430">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Livro de Gastos">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="book">
+  <div class="spine-header">
+    <div><h1>Livro de Gastos</h1><div class="brass-rule"></div></div>
+    <div class="month-picker" id="monthPickerWrap">
+      <button id="prevMonth" aria-label="Mês anterior">‹</button>
+      <span id="monthLabel">—</span>
+      <button id="nextMonth" aria-label="Próximo mês">›</button>
+    </div>
+  </div>
+
+  <div class="ledger">
+    <div class="ledger-top"></div>
+
+    <div class="tabbar">
+      <button class="tab-btn active" data-tab="Lancamentos">Lançamentos</button>
+      <button class="tab-btn" data-tab="Conciliacao">Conciliação</button>
+      <button class="tab-btn" data-tab="Parcelas">Parcelas</button>
+    </div>
+
+    <!-- ===== TAB LANÇAMENTOS ===== -->
+    <div class="tab-panel active" id="tabLancamentos">
+      <div class="totals-strip">
+        <div><div class="label">Total do mês</div><div class="value" id="monthTotal">R$ 0,00</div></div>
+        <div style="text-align:right"><div class="label">Lançamentos</div><div class="value" id="monthCount" style="font-size:1.1rem">0</div><div style="font-size:0.68rem;color:var(--text-muted);" id="totalCountLabel">total: 0</div></div>
+      </div>
+
+      <form class="entry-form" id="entryForm" novalidate>
+        <div class="editing-banner" id="editingBanner">Editando lançamento existente.</div>
+        <div class="field full">
+          <label for="desc">Descrição</label>
+          <input type="text" id="desc" list="descList" placeholder="ex: mercado, uber, farmácia" autocomplete="off" required>
+          <datalist id="descList"></datalist>
+        </div>
+        <div class="field full" style="display:flex; align-items:center; gap:8px; padding:2px 0;">
+          <input type="checkbox" id="isParcelado" style="width:auto;">
+          <label for="isParcelado" style="margin:0; text-transform:none; font-size:0.85rem; color:var(--text-dark); letter-spacing:0;">É uma compra parcelada?</label>
+        </div>
+        <div class="field" id="fieldValorSimples">
+          <label for="valor">Valor (R$)</label>
+          <input type="text" inputmode="decimal" id="valor" placeholder="0,00" required>
+        </div>
+        <div class="field" id="fieldValorTotal" style="display:none;">
+          <label for="valorTotalParcelado">Valor total da compra (R$)</label>
+          <input type="text" inputmode="decimal" id="valorTotalParcelado" placeholder="0,00">
+        </div>
+        <div class="field" id="fieldNumParcelas" style="display:none;">
+          <label for="numParcelas">Número de parcelas</label>
+          <input type="number" id="numParcelas" step="1" min="2" max="48" placeholder="ex: 6">
+        </div>
+        <div class="field full" id="previewParcela" style="display:none; font-size:0.78rem; color:var(--brass-dark); padding:2px 0;"></div>
+        <div class="field">
+          <label for="data">Data</label>
+          <input type="date" id="data" required>
+        </div>
+        <div class="field full">
+          <div class="field-label-row">
+            <label for="categoria">Categoria</label>
+            <button type="button" id="toggleCatPanel">gerenciar categorias</button>
+          </div>
+          <select id="categoria"></select>
+        </div>
+        <div class="cat-panel" id="catPanel">
+          <div id="catList"></div>
+          <div class="cat-add-row">
+            <input type="text" id="newCatName" placeholder="nova categoria">
+            <button type="button" id="addCatBtn">Adicionar</button>
+          </div>
+        </div>
+        <div class="form-actions">
+          <button type="button" class="add-btn" id="submitBtn" disabled>Carregando…</button>
+          <button type="button" class="cancel-edit-btn" id="cancelEditBtn">Cancelar</button>
+        </div>
+      </form>
+
+      <div class="entries" id="entriesList"><div class="empty-state">Carregando lançamentos…</div></div>
+      <div class="actions" style="flex-direction:column; align-items:stretch;">
+        <button class="export-btn" id="exportBtn">Exportar resumo do mês (Excel)</button>
+        <div style="display:flex; gap:8px;">
+          <button class="export-btn" id="backupBtn" style="flex:1;">💾 Backup completo</button>
+          <label class="export-btn" for="importBackupFile" style="flex:1; text-align:center; cursor:pointer; margin:0;">📥 Importar backup
+            <input type="file" id="importBackupFile" accept=".xlsx" style="display:none;">
+          </label>
+        </div>
+        <div id="downloadLinkArea" style="display:none; text-align:center; padding-top:6px;">
+          <a id="downloadLink" href="#" style="display:inline-block; background:var(--ink); color:var(--paper); padding:10px 18px; border-radius:4px; text-decoration:none; font-size:0.85rem; font-weight:600;">⬇️ Toque aqui para baixar o arquivo</a>
+        </div>
+        <div style="font-size:0.72rem; color:var(--text-muted); text-align:center; padding-top:2px;" id="lastBackupHint"></div>
+      </div>
+      <div class="status" id="statusMsg"></div>
+    </div>
+
+    <!-- ===== TAB CONCILIAÇÃO ===== -->
+    <div class="tab-panel" id="tabConciliacao">
+      <div class="reconcile-intro">Importe o PDF da fatura assim que ela chegar — o app lê os lançamentos sozinho, sem precisar de internet. Parcelas que já estavam previstas aqui são conciliadas automaticamente; só pede confirmação pra lançamentos novos.</div>
+      <div class="pdf-upload">
+        <label for="fileFaturaPdf">Fatura em PDF</label>
+        <input type="file" id="fileFaturaPdf" accept="application/pdf">
+      </div>
+      <div class="reconcile-upload">
+        <label for="fileFatura">Alternativa: planilha da fatura (.xlsx)</label>
+        <input type="file" id="fileFatura" accept=".xlsx">
+      </div>
+      <div class="reconcile-select" id="rcSelectWrap">
+        <label style="display:block;font-size:0.68rem;text-transform:uppercase;letter-spacing:0.07em;color:var(--text-muted);margin-bottom:6px;">Fatura</label>
+        <select id="rcFaturaSelect"></select>
+      </div>
+      <div class="reconcile-summary" id="rcSummary">
+        <div class="rc-badge auto"><span class="n" id="rcAutoN">0</span>parcelas automáticas</div>
+        <div class="rc-badge ok"><span class="n" id="rcOkN">0</span>conciliados</div>
+        <div class="rc-badge warn-fatura"><span class="n" id="rcFaturaN">0</span>só na fatura</div>
+        <div class="rc-badge warn-app"><span class="n" id="rcAppN">0</span>só no app</div>
+      </div>
+      <div class="rc-list" id="rcLists"></div>
+      <div class="status" id="rcStatusMsg"></div>
+    </div>
+
+    <!-- ===== TAB PARCELAS ===== -->
+    <div class="tab-panel" id="tabParcelas">
+      <div class="parcelas-intro">Com base nas parcelas em aberto, esta previsão mostra <strong>em qual fatura futura</strong> cada valor vai aparecer. Essas parcelas já são pré-lançadas automaticamente (marcadas como "parcela prevista") e conciliadas sozinhas assim que a fatura daquele mês chega.</div>
+      <div class="month-forecast-table" id="monthForecast"></div>
+      <div id="parcelasList"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Preview de importação de fatura: checksum + revisão antes de gravar -->
+<div class="preview-overlay" id="previewOverlay">
+  <div class="preview-card">
+    <div class="preview-head">
+      <h2 id="previewTitle">Revisar fatura importada</h2>
+      <div id="previewChecksumBanner" class="checksum-banner"></div>
+    </div>
+    <div class="preview-body" id="previewBody"></div>
+    <div class="preview-actions">
+      <button type="button" class="cancel-btn" id="previewCancelBtn">Cancelar</button>
+      <button type="button" class="confirm-btn" id="previewConfirmBtn">Confirmar importação</button>
+    </div>
+  </div>
+</div>
+
+<div class="update-banner" id="updateBanner">
+  <span>Nova versão do app disponível.</span>
+  <button type="button" id="updateBtn">Atualizar</button>
+</div>
+
+<script src="vendor/xlsx.full.min.js"></script>
+<script type="module" src="src/app.js"></script>
+</body>
+</html>

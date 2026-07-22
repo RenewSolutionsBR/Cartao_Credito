@@ -1,0 +1,17 @@
+{
+  "name": "Livro de Gastos",
+  "short_name": "Gastos",
+  "description": "Controle de gastos e conciliação de fatura de cartão, com dados salvos só no seu celular.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#1B2430",
+  "theme_color": "#1B2430",
+  "lang": "pt-BR",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
