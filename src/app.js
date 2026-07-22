@@ -40,6 +40,22 @@ function parseMoneyBR(str) {
 function monthKey(d) { return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'); }
 function monthLabelStr(d) { return d.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' }); }
 function todayISO() { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
+function formatDateBR(iso) {
+  if (!iso) return '';
+  const [y, m, d] = iso.split('-');
+  return `${d}/${m}/${y}`;
+}
+function parseDateBR(str) {
+  const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(String(str || '').trim());
+  if (!m) return null;
+  const [, dd, mm, yyyy] = m;
+  const d = parseInt(dd, 10), mo = parseInt(mm, 10), y = parseInt(yyyy, 10);
+  if (mo < 1 || mo > 12) return null;
+  const daysInMonth = new Date(y, mo, 0).getDate();
+  if (d < 1 || d > daysInMonth) return null;
+  return `${yyyy}-${mm}-${dd}`;
+}
+function setDataField(iso) { document.getElementById('data').value = formatDateBR(iso); }
 function escapeHtml(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 function catById(id) { return categories.find((c) => c.id === id); }
 function setStatus(msg, elId) { const el = document.getElementById(elId || 'statusMsg'); el.textContent = msg; if (msg) setTimeout(() => { el.textContent = ''; }, 4000); }
@@ -174,7 +190,7 @@ function startEdit(id) {
   editingId = id;
   document.getElementById('desc').value = e.descricao;
   document.getElementById('valor').value = e.valor;
-  document.getElementById('data').value = e.data;
+  setDataField(e.data);
   document.getElementById('categoria').value = e.categoria;
   document.getElementById('submitBtn').textContent = 'Salvar alterações';
   document.getElementById('cancelEditBtn').style.display = 'block';
@@ -185,7 +201,7 @@ function cancelEdit() {
   editingId = null;
   vindoDaConciliacao = false;
   document.getElementById('entryForm').reset();
-  document.getElementById('data').value = todayISO();
+  setDataField(todayISO());
   document.getElementById('submitBtn').textContent = 'Lançar gasto';
   document.getElementById('cancelEditBtn').style.display = 'none';
   document.getElementById('editingBanner').style.display = 'none';
@@ -234,10 +250,19 @@ document.getElementById('isParcelado').addEventListener('change', (ev) => {
 document.getElementById('valorTotalParcelado').addEventListener('input', updateParcelaPreview);
 document.getElementById('numParcelas').addEventListener('input', updateParcelaPreview);
 
+document.getElementById('data').addEventListener('input', (ev) => {
+  const digits = ev.target.value.replace(/\D/g, '').slice(0, 8);
+  let out = digits;
+  if (digits.length > 4) out = `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
+  else if (digits.length > 2) out = `${digits.slice(0, 2)}/${digits.slice(2)}`;
+  ev.target.value = out;
+});
+
 document.getElementById('submitBtn').addEventListener('click', async () => {
   try {
     const desc = document.getElementById('desc').value.trim();
-    const data = document.getElementById('data').value;
+    const dataDigitada = document.getElementById('data').value;
+    const data = parseDateBR(dataDigitada);
     const categoria = document.getElementById('categoria').value;
     const parcelado = document.getElementById('isParcelado').checked;
 
@@ -245,7 +270,7 @@ document.getElementById('submitBtn').addEventListener('click', async () => {
       const total = parseMoneyBR(document.getElementById('valorTotalParcelado').value);
       const n = parseInt(document.getElementById('numParcelas').value);
       if (!desc) { setStatus('Preencha a descrição.'); return; }
-      if (!data) { setStatus('Preencha a data.'); return; }
+      if (!data) { setStatus('Data inválida — use o formato DD/MM/AAAA.'); return; }
       if (isNaN(total)) { setStatus('Valor total inválido — use vírgula ou ponto, ex: 1200,00.'); return; }
       if (!n || n < 2) { setStatus('Número de parcelas precisa ser 2 ou mais.'); return; }
       const vals = splitParcelas(total, n);
@@ -264,7 +289,7 @@ document.getElementById('submitBtn').addEventListener('click', async () => {
       expenses.push(...novos);
       await storage.putMany('expenses', novos);
       document.getElementById('entryForm').reset();
-      document.getElementById('data').value = todayISO();
+      setDataField(todayISO());
       document.getElementById('isParcelado').dispatchEvent(new Event('change'));
       setStatus(`${n} parcelas lançadas, uma por mês.`);
       const [y, m] = data.split('-');
@@ -276,7 +301,7 @@ document.getElementById('submitBtn').addEventListener('click', async () => {
 
     const valor = parseMoneyBR(document.getElementById('valor').value);
     if (!desc) { setStatus('Preencha a descrição.'); return; }
-    if (!data) { setStatus('Preencha a data.'); return; }
+    if (!data) { setStatus('Data inválida — use o formato DD/MM/AAAA.'); return; }
     if (isNaN(valor)) { setStatus('Valor inválido — use vírgula ou ponto, ex: 52,11.'); return; }
 
     if (editingId) {
@@ -289,7 +314,7 @@ document.getElementById('submitBtn').addEventListener('click', async () => {
       expenses.push(novo);
       await storage.put('expenses', novo);
       document.getElementById('entryForm').reset();
-      document.getElementById('data').value = todayISO();
+      setDataField(todayISO());
       setStatus('Lançamento salvo.');
     }
     const [y, m] = data.split('-');
@@ -601,7 +626,7 @@ function displayReconciliation(vencimento) {
       cancelEdit();
       document.getElementById('desc').value = btn.dataset.desc;
       document.getElementById('valor').value = btn.dataset.valor;
-      document.getElementById('data').value = btn.dataset.data;
+      setDataField(btn.dataset.data);
       document.getElementById('desc').focus();
       vindoDaConciliacao = true;
     });
@@ -669,7 +694,7 @@ function setupServiceWorker() {
 }
 
 /* ---------- Boot ---------- */
-document.getElementById('data').value = todayISO();
+setDataField(todayISO());
 setupServiceWorker();
 if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
 loadAll().then(async () => {
