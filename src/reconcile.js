@@ -93,6 +93,21 @@ function dateDiffDays(iso1, iso2) {
   return Math.abs((new Date(iso1) - new Date(iso2)) / 86400000);
 }
 
+// Entre os candidatos não usados com a mesma identidade de parcela, acha o de data mais
+// próxima da referência (o vencimento da fatura sendo conciliada) — uma compra recorrente
+// pode ter várias parcelas já confirmadas (uma por mês) soltas no pool mais largo, e sem isso
+// a busca pegaria a primeira que aparecesse, não necessariamente a certa para esta fatura.
+function closestIndexByKey(pool, key, referenceDate) {
+  let bestIdx = -1;
+  let bestDiff = Infinity;
+  pool.forEach((e, i) => {
+    if (e.used || e.parcelaKey !== key) return;
+    const diff = dateDiffDays(e.data, referenceDate);
+    if (diff < bestDiff) { bestDiff = diff; bestIdx = i; }
+  });
+  return bestIdx;
+}
+
 /**
  * Aplica a confirmação automática: para cada linha de parcelamento da fatura recém
  * importada, procura entre os lançamentos previstos com a MESMA identidade (descrição +
@@ -134,7 +149,7 @@ export function autoConfirmParcelas(faturaRows, expenses, dataCorte) {
  * sobra nem lacuna. Sem essa informação (fatura importada via planilha, ou fatura anterior
  * desconhecida), cai numa estimativa de 35 dias antes do corte.
  */
-function getReconciliationWindow(faturasList, vencimento) {
+export function getReconciliationWindow(faturasList, vencimento) {
   const sorted = [...faturasList].sort((a, b) => (a.vencimento < b.vencimento ? -1 : 1));
   const idx = sorted.findIndex((f) => f.vencimento === vencimento);
   const fatura = idx >= 0 ? sorted[idx] : null;
@@ -151,6 +166,21 @@ function getReconciliationWindow(faturasList, vencimento) {
   return { windowStart, windowEnd };
 }
 
+// Alguns lançamentos aparecem na fatura com a data de compra registrada um pouco fora do
+// período de corte "oficial" dessa mesma fatura (posição/processamento irregular perto da
+// borda do ciclo, aparentemente uma particularidade do próprio banco). Por isso o CONJUNTO de
+// lançamentos candidatos a casar com uma fatura usa uma janela um pouco mais larga que a
+// oficial — mas a precisão de qual linha casa com qual continua vindo da identidade
+// (parcelamento) ou da proximidade de poucos dias com a data exata da linha (despesa), então
+// essa folga não reintroduz confusão entre faturas vizinhas.
+const POOL_SLACK_DAYS = 3;
+function getPoolWindow(faturasList, vencimento) {
+  const { windowStart, windowEnd } = getReconciliationWindow(faturasList, vencimento);
+  const poolStart = new Date(windowStart); poolStart.setDate(poolStart.getDate() - POOL_SLACK_DAYS);
+  const poolEnd = new Date(windowEnd); poolEnd.setDate(poolEnd.getDate() + POOL_SLACK_DAYS);
+  return { poolStart, poolEnd };
+}
+
 /**
  * Monta os buckets exibidos na aba Conciliação para uma fatura (vencimento) específica:
  * conciliados automaticamente (parcelas confirmadas por identidade, sem toque nenhum),
@@ -163,9 +193,14 @@ export function runReconciliation(vencimento, faturasList, expenses) {
   const fatura = faturasList.find((f) => f.vencimento === vencimento);
   const items = fatura ? fatura.rows : [];
   const { windowStart, windowEnd } = getReconciliationWindow(faturasList, vencimento);
+  const { poolStart, poolEnd } = getPoolWindow(faturasList, vencimento);
+  // O pool de candidatos pra CASAR é um pouco mais largo que a janela oficial (cobre datas
+  // registradas de forma irregular perto da borda do ciclo), mas o balde "só no app" só
+  // mostra quem está DENTRO da janela oficial desta fatura — senão uma parcela já confirmada
+  // pertencente à fatura vizinha (datada bem na borda) apareceria como ruído aqui também.
   const appPool = expenses
-    .filter((e) => !e.previsto && new Date(e.data) >= windowStart && new Date(e.data) <= windowEnd)
-    .map((e) => ({ ...e, used: false }));
+    .filter((e) => !e.previsto && new Date(e.data) >= poolStart && new Date(e.data) <= poolEnd)
+    .map((e) => ({ ...e, used: false, dentroDaJanela: new Date(e.data) >= windowStart && new Date(e.data) <= windowEnd }));
 
   const autoMatched = [];
   const matched = [];
@@ -175,9 +210,12 @@ export function runReconciliation(vencimento, faturasList, expenses) {
     let idx = -1;
     if (item.tipo === 'parcelamento') {
       // por identidade primeiro (mesma compra, independente do valor bater exato) — evita
-      // casar com a linha errada quando duas parcelas diferentes têm o valor coincidindo
+      // casar com a linha errada quando duas parcelas diferentes têm o valor coincidindo. Com
+      // o pool mais largo, pode haver MAIS de uma parcela já confirmada da mesma compra (uma
+      // por mês) candidata ao mesmo tempo — por isso pega a de data mais próxima do vencimento
+      // desta fatura, não só a primeira encontrada.
       const key = computeParcelaKey(item.descricao, item.data, item.parcela_total);
-      idx = appPool.findIndex((e) => !e.used && e.parcelaKey === key);
+      idx = closestIndexByKey(appPool, key, item.vencimento);
       if (idx < 0) idx = appPool.findIndex((e) => !e.used && Math.abs(e.valor - item.valor) < 0.01);
     } else {
       idx = appPool.findIndex((e) => !e.used && Math.abs(e.valor - item.valor) < 0.01 && dateDiffDays(e.data, item.data) <= 2);
@@ -190,7 +228,7 @@ export function runReconciliation(vencimento, faturasList, expenses) {
       faturaUnmatched.push(item);
     }
   });
-  const appUnmatched = appPool.filter((e) => !e.used);
+  const appUnmatched = appPool.filter((e) => !e.used && e.dentroDaJanela);
 
   return { autoMatched, matched, faturaUnmatched, appUnmatched };
 }
@@ -208,15 +246,15 @@ export function buildFullReconciliationRows(faturasList, allExpenses) {
   const sortedFaturas = [...faturasList].sort((a, b) => (a.vencimento < b.vencimento ? -1 : 1));
 
   sortedFaturas.forEach((fatura) => {
-    const { windowStart, windowEnd } = getReconciliationWindow(faturasList, fatura.vencimento);
+    const { poolStart, poolEnd } = getPoolWindow(faturasList, fatura.vencimento);
     fatura.rows.forEach((item) => {
       let idx = -1;
       if (item.tipo === 'parcelamento') {
         const key = computeParcelaKey(item.descricao, item.data, item.parcela_total);
-        idx = pool.findIndex((e) => !e.used && e.parcelaKey === key);
-        if (idx < 0) idx = pool.findIndex((e) => !e.used && new Date(e.data) >= windowStart && new Date(e.data) <= windowEnd && Math.abs(e.valor - item.valor) < 0.01);
+        idx = closestIndexByKey(pool, key, item.vencimento);
+        if (idx < 0) idx = pool.findIndex((e) => !e.used && new Date(e.data) >= poolStart && new Date(e.data) <= poolEnd && Math.abs(e.valor - item.valor) < 0.01);
       } else {
-        idx = pool.findIndex((e) => !e.used && new Date(e.data) >= windowStart && new Date(e.data) <= windowEnd && Math.abs(e.valor - item.valor) < 0.01 && dateDiffDays(e.data, item.data) <= 2);
+        idx = pool.findIndex((e) => !e.used && new Date(e.data) >= poolStart && new Date(e.data) <= poolEnd && Math.abs(e.valor - item.valor) < 0.01 && dateDiffDays(e.data, item.data) <= 2);
       }
       const parcela = item.parcela_atual ? `${item.parcela_atual}/${item.parcela_total}` : '';
       if (idx >= 0) {

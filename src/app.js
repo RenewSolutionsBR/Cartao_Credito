@@ -376,9 +376,11 @@ async function offerDownload(wb, filename, opts) {
   link.href = url;
   link.download = filename;
   link.textContent = `⬇️ Toque aqui para baixar: ${filename}`;
-  document.getElementById('downloadLinkArea').style.display = 'block';
-  setStatus('Arquivo pronto — toque no link acima pra baixar.');
+  document.getElementById('downloadLinkArea').classList.add('show');
 }
+document.getElementById('downloadLinkCloseBtn').addEventListener('click', () => {
+  document.getElementById('downloadLinkArea').classList.remove('show');
+});
 
 document.getElementById('exportBtn').addEventListener('click', () => {
   const mk = monthKey(viewDate);
