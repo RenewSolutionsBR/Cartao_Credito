@@ -1,6 +1,6 @@
 import * as storage from './storage.js';
 import { parseFaturaPdf } from './pdf-parser.js';
-import { computeParcelaGroups, syncPredictions, autoConfirmParcelas, runReconciliation, buildFullReconciliationRows } from './reconcile.js';
+import { computeParcelaGroups, syncPredictions, autoConfirmParcelas, runReconciliation, buildFullReconciliationRows, computeParcelaKey } from './reconcile.js';
 
 const DEFAULT_CATEGORIES = [
   { id: 'alimentacao', nome: 'Alimentação', cor: '#7A8B69' },
@@ -21,6 +21,7 @@ let faturasList = []; // [{vencimento, arquivo, rows, importedAt}]
 let editingId = null;
 let currentVencimento = null;
 let vindoDaConciliacao = false;
+let pendingParcelaKey = null;
 let pendingImport = null; // { vencimento, arquivo, rows, checksum, warnings, fromXlsx }
 
 let viewDate = new Date();
@@ -211,6 +212,7 @@ function startEdit(id) {
 function cancelEdit() {
   editingId = null;
   vindoDaConciliacao = false;
+  pendingParcelaKey = null;
   document.getElementById('entryForm').reset();
   setDataField(todayISO());
   document.getElementById('submitBtn').textContent = 'Lançar gasto';
@@ -322,6 +324,7 @@ document.getElementById('submitBtn').addEventListener('click', async () => {
       setStatus('Lançamento atualizado.');
     } else {
       const novo = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7), descricao: desc, valor, data, categoria };
+      if (pendingParcelaKey) { novo.parcelaKey = pendingParcelaKey; pendingParcelaKey = null; }
       expenses.push(novo);
       await storage.put('expenses', novo);
       document.getElementById('entryForm').reset();
@@ -403,24 +406,29 @@ document.getElementById('resetAllBtn').addEventListener('click', async () => {
   setStatus('Todos os dados foram apagados.');
 });
 
-document.getElementById('exportFullBtn').addEventListener('click', () => {
-  const rows = buildFullReconciliationRows(faturasList, expenses);
-  if (!rows.length) { setStatus('Nada para exportar ainda — importe alguma fatura primeiro.', 'rcStatusMsg'); return; }
-  const sheetRows = rows.map((r) => ({
-    'Status': r.status,
-    'Data lançamento': r.dataLancamento,
-    'Descrição lançamento': r.descricaoLancamento,
-    'Categoria': r.categoria ? (catById(r.categoria) || {}).nome || r.categoria : '',
-    'Valor lançamento': r.valorLancamento,
-    'Vencimento fatura': r.vencimentoFatura,
-    'Data fatura': r.dataFatura,
-    'Descrição fatura': r.descricaoFatura,
-    'Parcela': r.parcela,
-    'Valor fatura': r.valorFatura,
-  }));
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sheetRows), 'Conciliação completa');
-  offerDownload(wb, `conciliacao-completa-${todayISO()}.xlsx`);
+document.getElementById('exportFullBtn').addEventListener('click', async () => {
+  try {
+    if (!faturasList.length) { setStatus('Nada para exportar ainda — importe alguma fatura primeiro.', 'rcStatusMsg'); return; }
+    const rows = buildFullReconciliationRows(faturasList, expenses);
+    if (!rows.length) { setStatus('Nada para exportar ainda.', 'rcStatusMsg'); return; }
+    const sheetRows = rows.map((r) => ({
+      'Status': r.status,
+      'Data lançamento': r.dataLancamento,
+      'Descrição lançamento': r.descricaoLancamento,
+      'Categoria': r.categoria ? (catById(r.categoria) || {}).nome || r.categoria : '',
+      'Valor lançamento': r.valorLancamento,
+      'Vencimento fatura': r.vencimentoFatura,
+      'Data fatura': r.dataFatura,
+      'Descrição fatura': r.descricaoFatura,
+      'Parcela': r.parcela,
+      'Valor fatura': r.valorFatura,
+    }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sheetRows), 'Conciliação completa');
+    await offerDownload(wb, `conciliacao-completa-${todayISO()}.xlsx`);
+  } catch (err) {
+    setStatus('Erro ao exportar: ' + err.message, 'rcStatusMsg');
+  }
 });
 
 function excelDateToISO(v) {
@@ -654,9 +662,10 @@ function displayReconciliation(vencimento) {
   }
 
   html += `<div class="rc-group-title">⚠️ Na fatura, não lançado no app (${faturaUnmatched.length})</div>`;
-  html += faturaUnmatched.length ? faturaUnmatched.map((i) =>
-    rowHtml(i.data, i.descricao, i.valor, `<button class="rc-add" data-desc="${escapeHtml(i.descricao)}" data-valor="${i.valor}" data-data="${i.tipo === 'parcelamento' ? dataParcelaManual : i.data}">+ lançar</button>`)
-  ).join('') : `<div class="empty-state" style="padding:10px 0;">Nenhum — tudo que está na fatura já foi lançado.</div>`;
+  html += faturaUnmatched.length ? faturaUnmatched.map((i) => {
+    const key = i.tipo === 'parcelamento' ? computeParcelaKey(i.descricao, i.data, i.parcela_total) : '';
+    return rowHtml(i.data, i.descricao, i.valor, `<button class="rc-add" data-desc="${escapeHtml(i.descricao)}" data-valor="${i.valor}" data-data="${i.tipo === 'parcelamento' ? dataParcelaManual : i.data}" data-parcelakey="${escapeHtml(key)}">+ lançar</button>`);
+  }).join('') : `<div class="empty-state" style="padding:10px 0;">Nenhum — tudo que está na fatura já foi lançado.</div>`;
 
   html += `<div class="rc-group-title">⚠️ Lançado no app, não aparece na fatura (${appUnmatched.length})</div>`;
   html += appUnmatched.length ? appUnmatched.map((e) => rowHtml(e.data, e.descricao, e.valor)).join('')
@@ -676,6 +685,7 @@ function displayReconciliation(vencimento) {
       setDataField(btn.dataset.data);
       document.getElementById('desc').focus();
       vindoDaConciliacao = true;
+      pendingParcelaKey = btn.dataset.parcelakey || null;
     });
   });
 }

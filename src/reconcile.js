@@ -172,9 +172,16 @@ export function runReconciliation(vencimento, faturasList, expenses) {
   const faturaUnmatched = [];
 
   items.forEach((item) => {
-    const idx = item.tipo === 'parcelamento'
-      ? appPool.findIndex((e) => !e.used && Math.abs(e.valor - item.valor) < 0.01)
-      : appPool.findIndex((e) => !e.used && Math.abs(e.valor - item.valor) < 0.01 && dateDiffDays(e.data, item.data) <= 2);
+    let idx = -1;
+    if (item.tipo === 'parcelamento') {
+      // por identidade primeiro (mesma compra, independente do valor bater exato) — evita
+      // casar com a linha errada quando duas parcelas diferentes têm o valor coincidindo
+      const key = computeParcelaKey(item.descricao, item.data, item.parcela_total);
+      idx = appPool.findIndex((e) => !e.used && e.parcelaKey === key);
+      if (idx < 0) idx = appPool.findIndex((e) => !e.used && Math.abs(e.valor - item.valor) < 0.01);
+    } else {
+      idx = appPool.findIndex((e) => !e.used && Math.abs(e.valor - item.valor) < 0.01 && dateDiffDays(e.data, item.data) <= 2);
+    }
     if (idx >= 0) {
       appPool[idx].used = true;
       const bucket = appPool[idx].conciliadoAutomaticamente ? autoMatched : matched;
@@ -203,9 +210,14 @@ export function buildFullReconciliationRows(faturasList, allExpenses) {
   sortedFaturas.forEach((fatura) => {
     const { windowStart, windowEnd } = getReconciliationWindow(faturasList, fatura.vencimento);
     fatura.rows.forEach((item) => {
-      const idx = item.tipo === 'parcelamento'
-        ? pool.findIndex((e) => !e.used && new Date(e.data) >= windowStart && new Date(e.data) <= windowEnd && Math.abs(e.valor - item.valor) < 0.01)
-        : pool.findIndex((e) => !e.used && new Date(e.data) >= windowStart && new Date(e.data) <= windowEnd && Math.abs(e.valor - item.valor) < 0.01 && dateDiffDays(e.data, item.data) <= 2);
+      let idx = -1;
+      if (item.tipo === 'parcelamento') {
+        const key = computeParcelaKey(item.descricao, item.data, item.parcela_total);
+        idx = pool.findIndex((e) => !e.used && e.parcelaKey === key);
+        if (idx < 0) idx = pool.findIndex((e) => !e.used && new Date(e.data) >= windowStart && new Date(e.data) <= windowEnd && Math.abs(e.valor - item.valor) < 0.01);
+      } else {
+        idx = pool.findIndex((e) => !e.used && new Date(e.data) >= windowStart && new Date(e.data) <= windowEnd && Math.abs(e.valor - item.valor) < 0.01 && dateDiffDays(e.data, item.data) <= 2);
+      }
       const parcela = item.parcela_atual ? `${item.parcela_atual}/${item.parcela_total}` : '';
       if (idx >= 0) {
         const e = pool[idx];
