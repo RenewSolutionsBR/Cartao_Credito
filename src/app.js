@@ -1,6 +1,6 @@
 import * as storage from './storage.js';
 import { parseFaturaPdf } from './pdf-parser.js';
-import { computeParcelaGroups, buildFuturePredictions, autoConfirmParcelas, runReconciliation } from './reconcile.js';
+import { computeParcelaGroups, syncPredictions, autoConfirmParcelas, runReconciliation } from './reconcile.js';
 
 const DEFAULT_CATEGORIES = [
   { id: 'alimentacao', nome: 'Alimentação', cor: '#7A8B69' },
@@ -567,10 +567,15 @@ async function commitFaturaImport(imp) {
   lastAutoConfirmedIds = new Set(confirmed.map((c) => c.after.id));
   if (confirmed.length) await storage.putMany('expenses', confirmed.map((c) => c.after));
 
-  const predictions = buildFuturePredictions(allFaturaRows(), expenses, categories);
-  if (predictions.length) {
-    expenses = [...expenses, ...predictions];
-    await storage.putMany('expenses', predictions);
+  const { toAdd, toRemoveIds } = syncPredictions(allFaturaRows(), expenses, categories);
+  if (toRemoveIds.length) {
+    const removeSet = new Set(toRemoveIds);
+    expenses = expenses.filter((e) => !removeSet.has(e.id));
+    await Promise.all(toRemoveIds.map((id) => storage.remove('expenses', id)));
+  }
+  if (toAdd.length) {
+    expenses = [...expenses, ...toAdd];
+    await storage.putMany('expenses', toAdd);
   }
 
   await storage.setMeta('lastFaturaImportedAt', Date.now());
@@ -580,7 +585,7 @@ async function commitFaturaImport(imp) {
   displayReconciliation(imp.vencimento);
   renderDescList(); render();
   const autoMsg = confirmed.length ? `, ${confirmed.length} parcela(s) conciliada(s) automaticamente` : '';
-  setStatus(`${imp.rows.length} lançamentos da fatura importados${autoMsg}.`, 'rcStatusMsg');
+  setStatus(`${imp.rows.length} lançamentos da fatura importados${autoMsg}. Previsões de parcelas futuras recalculadas.`, 'rcStatusMsg');
 }
 
 function displayReconciliation(vencimento) {

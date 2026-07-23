@@ -13,9 +13,16 @@ export function computeParcelaKey(descricao, dataCompraOriginal, parcelaTotal) {
 }
 
 function addMonths(iso, n) {
+  // Preserva o "dia" só até onde o mês de destino permitir (ex.: dia 30 virando fevereiro
+  // fica 28/29, não "estoura" pra março) — sem isso, um vencimento dia 30 fazia duas
+  // previsões seguidas caírem no mesmo mês (a de fevereiro escorregava pra março),
+  // empurrando a última parcela um mês adiante do que realmente aconteceria.
   const d = new Date(iso + 'T00:00:00');
-  d.setMonth(d.getMonth() + n);
-  return d;
+  const day = d.getDate();
+  const target = new Date(d.getFullYear(), d.getMonth() + n, 1);
+  const daysInTarget = new Date(target.getFullYear(), target.getMonth() + 1, 0).getDate();
+  target.setDate(Math.min(day, daysInTarget));
+  return target;
 }
 function ymOf(d) { return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'); }
 
@@ -49,29 +56,26 @@ export function computeParcelaGroups(allFaturaRows) {
 }
 
 /**
- * Gera as novas entradas "previsto" que ainda não existem no app, para os meses futuros
- * de cada parcelamento em aberto. Cada previsão carrega seu próprio parcelaKey (identidade
- * da compra original), usado depois pra auto-confirmação — não é a mesma coisa que a
- * data prevista de cobrança, que fica no campo `data` de cada lançamento.
+ * Recria do zero todas as previsões de parcelas futuras ("previsto": true) a partir do
+ * histórico de faturas mais atual — em vez de só ir adicionando previsões novas por cima
+ * das antigas. É de propósito: previsão nunca é dado real do usuário, só uma projeção; se
+ * a fatura mudou o ritmo de cobrança (ex.: pulou um mês, antecipou outro) ou uma parcela já
+ * terminou, a previsão antiga fica errada e precisa sumir, não só ganhar uma nova ao lado.
+ * Lançamentos já CONFIRMADOS (previsto: false, seja manual ou por auto-conciliação) nunca
+ * são tocados aqui — só afeta o que ainda é especulativo.
  */
-export function buildFuturePredictions(allFaturaRows, existingExpenses, categories) {
+export function syncPredictions(allFaturaRows, existingExpenses, categories) {
   const groups = computeParcelaGroups(allFaturaRows);
-  if (groups.length === 0) return [];
-
   const catId = (categories.find((c) => c.nome.toLowerCase() === 'parcelamentos') || {}).id;
-  const newExpenses = [];
-  const existingByMonthValor = new Map(); // chave "ym|valorCentavos" -> true, evita duplicar por coincidência
-  existingExpenses.forEach((e) => existingByMonthValor.set(`${e.data.slice(0, 7)}|${Math.round(e.valor * 100)}`, true));
-  const existingIds = new Set(existingExpenses.map((e) => e.id));
 
+  const toRemoveIds = existingExpenses.filter((e) => e.previsto).map((e) => e.id);
+
+  const toAdd = [];
   groups.forEach((g) => {
     g.months.forEach((m) => {
-      const safeKey = (g.descricao + '|' + g.valor.toFixed(2) + '|' + m.ym).replace(/[^a-zA-Z0-9]/g, '_');
-      const id = 'seed_' + safeKey;
-      if (existingIds.has(id)) return;
-      if (existingByMonthValor.has(`${m.ym}|${Math.round(m.valor * 100)}`)) return;
-      newExpenses.push({
-        id,
+      const safeKey = (g.descricao + '|' + m.valor.toFixed(2) + '|' + m.ym).replace(/[^a-zA-Z0-9]/g, '_');
+      toAdd.push({
+        id: 'seed_' + safeKey,
         descricao: `${g.descricao} (parcela prevista)`,
         valor: m.valor,
         data: m.ym + '-01',
@@ -81,7 +85,8 @@ export function buildFuturePredictions(allFaturaRows, existingExpenses, categori
       });
     });
   });
-  return newExpenses;
+
+  return { toAdd, toRemoveIds };
 }
 
 /**
