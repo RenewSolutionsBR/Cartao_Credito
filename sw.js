@@ -1,7 +1,7 @@
 // Service worker: cache versionado do app inteiro (shell + libs vendorizadas), pra rodar
 // 100% offline depois do primeiro load, com um fluxo de atualização que não troca a versão
 // no meio de uma sessão em uso (só depois que o usuário toca em "Atualizar").
-const CACHE_VERSION = 'livro-de-gastos-v5';
+const CACHE_VERSION = 'livro-de-gastos-v6';
 
 const PRECACHE_URLS = [
   './',

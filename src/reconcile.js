@@ -100,10 +100,13 @@ function dateDiffDays(iso1, iso2) {
  * vencimento real — não exige que caia no mesmo mês "nominal", porque o Santander às vezes
  * emite duas faturas dentro do mesmo mês (ex.: uma no dia 1 e outra no dia 30), o que faria
  * a segunda não achar nenhuma previsão pendente se a exigência fosse mês idêntico. Ao
- * confirmar, a data do lançamento passa a ser a do vencimento da fatura (mesma convenção
- * usada no "+ lançar" manual), pra ficar consistente e cair na janela de conciliação certa.
+ * confirmar, a data do lançamento passa a ser a data de CORTE da fatura (não o vencimento):
+ * a janela de conciliação de cada fatura termina no corte, alguns dias antes do vencimento —
+ * se a parcela ficasse datada no vencimento, ela cairia fora da janela da própria fatura a
+ * que pertence e nunca apareceria como conciliada. Sem corte conhecido (fatura sem essa
+ * informação), cai no vencimento mesmo.
  */
-export function autoConfirmParcelas(faturaRows, expenses) {
+export function autoConfirmParcelas(faturaRows, expenses, dataCorte) {
   const byId = new Map(expenses.map((e) => [e.id, e]));
   const confirmed = [];
   const usedIds = new Set();
@@ -116,7 +119,7 @@ export function autoConfirmParcelas(faturaRows, expenses) {
     candidates.sort((a, b) => dateDiffDays(a.data, row.vencimento) - dateDiffDays(b.data, row.vencimento));
     const candidate = candidates[0];
     usedIds.add(candidate.id);
-    const updated = { ...candidate, previsto: false, descricao: candidate.descricao.replace(/\s*\(parcela prevista\)\s*$/i, ''), valor: row.valor, data: row.vencimento, conciliadoAutomaticamente: true };
+    const updated = { ...candidate, previsto: false, descricao: candidate.descricao.replace(/\s*\(parcela prevista\)\s*$/i, ''), valor: row.valor, data: dataCorte || row.vencimento, conciliadoAutomaticamente: true };
     byId.set(updated.id, updated);
     confirmed.push({ before: candidate, after: updated, faturaRow: row });
   }
@@ -161,7 +164,7 @@ export function runReconciliation(vencimento, faturasList, expenses) {
   const items = fatura ? fatura.rows : [];
   const { windowStart, windowEnd } = getReconciliationWindow(faturasList, vencimento);
   const appPool = expenses
-    .filter((e) => new Date(e.data) >= windowStart && new Date(e.data) <= windowEnd)
+    .filter((e) => !e.previsto && new Date(e.data) >= windowStart && new Date(e.data) <= windowEnd)
     .map((e) => ({ ...e, used: false }));
 
   const autoMatched = [];

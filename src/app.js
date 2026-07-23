@@ -603,7 +603,7 @@ async function commitFaturaImport(imp) {
   faturasList = [...faturasList.filter((f) => f.vencimento !== imp.vencimento), faturaRecord];
   await storage.put('faturas', faturaRecord);
 
-  const { updatedExpenses, confirmed } = autoConfirmParcelas(imp.rows, expenses);
+  const { updatedExpenses, confirmed } = autoConfirmParcelas(imp.rows, expenses, imp.dataCorte);
   expenses = updatedExpenses;
   if (confirmed.length) await storage.putMany('expenses', confirmed.map((c) => c.after));
 
@@ -630,6 +630,8 @@ async function commitFaturaImport(imp) {
 
 function displayReconciliation(vencimento) {
   const { autoMatched, matched, faturaUnmatched, appUnmatched } = runReconciliation(vencimento, faturasList, expenses);
+  const faturaObj = faturasList.find((f) => f.vencimento === vencimento);
+  const dataParcelaManual = (faturaObj && faturaObj.dataCorte) || vencimento;
 
   document.getElementById('rcSummary').classList.add('show');
   document.getElementById('rcAutoN').textContent = autoMatched.length;
@@ -653,7 +655,7 @@ function displayReconciliation(vencimento) {
 
   html += `<div class="rc-group-title">⚠️ Na fatura, não lançado no app (${faturaUnmatched.length})</div>`;
   html += faturaUnmatched.length ? faturaUnmatched.map((i) =>
-    rowHtml(i.data, i.descricao, i.valor, `<button class="rc-add" data-desc="${escapeHtml(i.descricao)}" data-valor="${i.valor}" data-data="${i.tipo === 'parcelamento' ? vencimento : i.data}">+ lançar</button>`)
+    rowHtml(i.data, i.descricao, i.valor, `<button class="rc-add" data-desc="${escapeHtml(i.descricao)}" data-valor="${i.valor}" data-data="${i.tipo === 'parcelamento' ? dataParcelaManual : i.data}">+ lançar</button>`)
   ).join('') : `<div class="empty-state" style="padding:10px 0;">Nenhum — tudo que está na fatura já foi lançado.</div>`;
 
   html += `<div class="rc-group-title">⚠️ Lançado no app, não aparece na fatura (${appUnmatched.length})</div>`;
