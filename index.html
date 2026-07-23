@@ -102,6 +102,7 @@
           <a id="downloadLink" href="#" style="display:inline-block; background:var(--ink); color:var(--paper); padding:10px 18px; border-radius:4px; text-decoration:none; font-size:0.85rem; font-weight:600;">⬇️ Toque aqui para baixar o arquivo</a>
         </div>
         <div style="font-size:0.72rem; color:var(--text-muted); text-align:center; padding-top:2px;" id="lastBackupHint"></div>
+        <button type="button" id="resetAllBtn" style="background:none; border:none; color:var(--danger); font-size:0.7rem; text-decoration:underline; cursor:pointer; padding:6px 0 0;">Apagar todos os dados do app</button>
       </div>
       <div class="status" id="statusMsg"></div>
     </div>
@@ -128,6 +129,9 @@
         <div class="rc-badge warn-app"><span class="n" id="rcAppN">0</span>só no app</div>
       </div>
       <div class="rc-list" id="rcLists"></div>
+      <div class="actions" style="padding-top:0;">
+        <button class="export-btn" id="exportFullBtn">Exportar conciliação completa (Excel)</button>
+      </div>
       <div class="status" id="rcStatusMsg"></div>
     </div>
 

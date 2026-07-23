@@ -94,6 +94,13 @@ export async function clearStore(storeName) {
   return reqToPromise(tx(db, storeName, 'readwrite').clear());
 }
 
+export async function resetAllData() {
+  await clearStore('expenses');
+  await clearStore('categories');
+  await clearStore('faturas');
+  await clearStore('meta');
+}
+
 export async function getByIndex(storeName, indexName, value) {
   const db = await openDB();
   const idx = tx(db, storeName, 'readonly').index(indexName);

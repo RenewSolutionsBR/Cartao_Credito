@@ -89,46 +89,50 @@ export function syncPredictions(allFaturaRows, existingExpenses, categories) {
   return { toAdd, toRemoveIds };
 }
 
-/**
- * Aplica a confirmação automática: para cada linha de parcelamento da fatura recém
- * importada, procura um lançamento previsto com a MESMA identidade (não o mesmo valor) no
- * mês de vencimento certo. Se achar, confirma sozinho (tira o "previsto", concilia, corrige
- * o valor se houve diferença de centavos). Devolve os lançamentos alterados (pra persistir)
- * e um resumo pra mostrar ao usuário.
- */
-export function autoConfirmParcelas(faturaRows, expenses) {
-  const byId = new Map(expenses.map((e) => [e.id, e]));
-  const confirmed = [];
-  const vencimentoMonth = faturaRows[0] ? faturaRows[0].vencimento.slice(0, 7) : null;
-
-  for (const row of faturaRows) {
-    if (row.tipo !== 'parcelamento') continue;
-    const key = computeParcelaKey(row.descricao, row.data, row.parcela_total);
-    const candidate = expenses.find((e) => e.previsto && e.parcelaKey === key && e.data.slice(0, 7) === row.vencimento.slice(0, 7));
-    if (!candidate) continue;
-    const updated = { ...candidate, previsto: false, descricao: candidate.descricao.replace(/\s*\(parcela prevista\)\s*$/i, ''), valor: row.valor, conciliadoAutomaticamente: true };
-    byId.set(updated.id, updated);
-    confirmed.push({ before: candidate, after: updated, faturaRow: row });
-  }
-
-  return { updatedExpenses: [...byId.values()], confirmed, vencimentoMonth };
-}
-
 function dateDiffDays(iso1, iso2) {
   return Math.abs((new Date(iso1) - new Date(iso2)) / 86400000);
 }
 
 /**
+ * Aplica a confirmação automática: para cada linha de parcelamento da fatura recém
+ * importada, procura entre os lançamentos previstos com a MESMA identidade (descrição +
+ * data da compra original + total de parcelas) qual tem a data prevista mais próxima do
+ * vencimento real — não exige que caia no mesmo mês "nominal", porque o Santander às vezes
+ * emite duas faturas dentro do mesmo mês (ex.: uma no dia 1 e outra no dia 30), o que faria
+ * a segunda não achar nenhuma previsão pendente se a exigência fosse mês idêntico. Ao
+ * confirmar, a data do lançamento passa a ser a do vencimento da fatura (mesma convenção
+ * usada no "+ lançar" manual), pra ficar consistente e cair na janela de conciliação certa.
+ */
+export function autoConfirmParcelas(faturaRows, expenses) {
+  const byId = new Map(expenses.map((e) => [e.id, e]));
+  const confirmed = [];
+  const usedIds = new Set();
+
+  for (const row of faturaRows) {
+    if (row.tipo !== 'parcelamento') continue;
+    const key = computeParcelaKey(row.descricao, row.data, row.parcela_total);
+    const candidates = expenses.filter((e) => e.previsto && e.parcelaKey === key && !usedIds.has(e.id));
+    if (!candidates.length) continue;
+    candidates.sort((a, b) => dateDiffDays(a.data, row.vencimento) - dateDiffDays(b.data, row.vencimento));
+    const candidate = candidates[0];
+    usedIds.add(candidate.id);
+    const updated = { ...candidate, previsto: false, descricao: candidate.descricao.replace(/\s*\(parcela prevista\)\s*$/i, ''), valor: row.valor, data: row.vencimento, conciliadoAutomaticamente: true };
+    byId.set(updated.id, updated);
+    confirmed.push({ before: candidate, after: updated, faturaRow: row });
+  }
+
+  return { updatedExpenses: [...byId.values()], confirmed };
+}
+
+/**
  * Monta os buckets exibidos na aba Conciliação para uma fatura (vencimento) específica:
  * conciliados automaticamente (parcelas confirmadas por identidade, sem toque nenhum),
- * conciliados manualmente (despesas e parcelas que já batiam por valor/data, como antes),
- * só na fatura (precisa de "+ lançar") e só no app (lançado mas não aparece na fatura).
- * `expenses` já deve refletir o resultado de autoConfirmParcelas (previsto=false onde já
- * confirmado), então aqui as parcelas auto-confirmadas caem naturalmente no match por valor
- * — usamos o retorno de autoConfirmParcelas só pra saber QUAIS foram automáticas, pra exibir
- * com uma tag diferente em vez de misturar com o que o usuário confirmou manualmente antes.
+ * conciliados manualmente, só na fatura (precisa de "+ lançar") e só no app. A marca de
+ * "automático" é lida direto do lançamento (campo `conciliadoAutomaticamente`, gravado
+ * permanentemente quando a confirmação acontece) — não depende de qual foi a última fatura
+ * importada na sessão, então não se perde ao trocar de aba ou reabrir o app.
  */
-export function runReconciliation(vencimento, allFaturaRows, expenses, autoConfirmedIds) {
+export function runReconciliation(vencimento, allFaturaRows, expenses) {
   const items = allFaturaRows.filter((r) => r.vencimento === vencimento);
   const windowStart = new Date(vencimento); windowStart.setDate(windowStart.getDate() - 40);
   const windowEnd = new Date(vencimento);
@@ -146,7 +150,7 @@ export function runReconciliation(vencimento, allFaturaRows, expenses, autoConfi
       : appPool.findIndex((e) => !e.used && Math.abs(e.valor - item.valor) < 0.01 && dateDiffDays(e.data, item.data) <= 2);
     if (idx >= 0) {
       appPool[idx].used = true;
-      const bucket = autoConfirmedIds && autoConfirmedIds.has(appPool[idx].id) ? autoMatched : matched;
+      const bucket = appPool[idx].conciliadoAutomaticamente ? autoMatched : matched;
       bucket.push({ fatura: item, app: appPool[idx] });
     } else {
       faturaUnmatched.push(item);
@@ -155,4 +159,57 @@ export function runReconciliation(vencimento, allFaturaRows, expenses, autoConfi
   const appUnmatched = appPool.filter((e) => !e.used);
 
   return { autoMatched, matched, faturaUnmatched, appUnmatched };
+}
+
+/**
+ * Monta a base pro "Exportar conciliação completa": percorre todas as faturas importadas
+ * em ordem cronológica, casando cada lançamento da fatura com um lançamento real do app (o
+ * mesmo critério usado na aba Conciliação) sem deixar um lançamento ser reaproveitado em
+ * duas faturas diferentes — importante porque as janelas de ±40 dias de faturas vizinhas se
+ * sobrepõem. O que sobrar de lançamento real sem casar em nenhuma fatura vira "Só no app".
+ */
+export function buildFullReconciliationRows(faturasList, allExpenses) {
+  const pool = allExpenses.filter((e) => !e.previsto).map((e) => ({ ...e, used: false }));
+  const rows = [];
+  const sortedFaturas = [...faturasList].sort((a, b) => (a.vencimento < b.vencimento ? -1 : 1));
+
+  sortedFaturas.forEach((fatura) => {
+    const windowStart = new Date(fatura.vencimento); windowStart.setDate(windowStart.getDate() - 40);
+    const windowEnd = new Date(fatura.vencimento);
+    fatura.rows.forEach((item) => {
+      const idx = item.tipo === 'parcelamento'
+        ? pool.findIndex((e) => !e.used && new Date(e.data) >= windowStart && new Date(e.data) <= windowEnd && Math.abs(e.valor - item.valor) < 0.01)
+        : pool.findIndex((e) => !e.used && new Date(e.data) >= windowStart && new Date(e.data) <= windowEnd && Math.abs(e.valor - item.valor) < 0.01 && dateDiffDays(e.data, item.data) <= 2);
+      const parcela = item.parcela_atual ? `${item.parcela_atual}/${item.parcela_total}` : '';
+      if (idx >= 0) {
+        const e = pool[idx];
+        e.used = true;
+        rows.push({
+          status: e.conciliadoAutomaticamente ? 'Conciliado (automático)' : 'Conciliado',
+          vencimentoFatura: fatura.vencimento, dataFatura: item.data, descricaoFatura: item.descricao, parcela, valorFatura: item.valor,
+          dataLancamento: e.data, descricaoLancamento: e.descricao, categoria: e.categoria, valorLancamento: e.valor,
+        });
+      } else {
+        rows.push({
+          status: 'Só na fatura',
+          vencimentoFatura: fatura.vencimento, dataFatura: item.data, descricaoFatura: item.descricao, parcela, valorFatura: item.valor,
+          dataLancamento: '', descricaoLancamento: '', categoria: '', valorLancamento: '',
+        });
+      }
+    });
+  });
+
+  pool.filter((e) => !e.used).forEach((e) => {
+    rows.push({
+      status: 'Só no app',
+      vencimentoFatura: '', dataFatura: '', descricaoFatura: '', parcela: '', valorFatura: '',
+      dataLancamento: e.data, descricaoLancamento: e.descricao, categoria: e.categoria, valorLancamento: e.valor,
+    });
+  });
+
+  rows.sort((a, b) => {
+    const da = a.dataLancamento || a.dataFatura, db = b.dataLancamento || b.dataFatura;
+    return da < db ? -1 : da > db ? 1 : 0;
+  });
+  return rows;
 }

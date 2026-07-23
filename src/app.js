@@ -1,6 +1,6 @@
 import * as storage from './storage.js';
 import { parseFaturaPdf } from './pdf-parser.js';
-import { computeParcelaGroups, syncPredictions, autoConfirmParcelas, runReconciliation } from './reconcile.js';
+import { computeParcelaGroups, syncPredictions, autoConfirmParcelas, runReconciliation, buildFullReconciliationRows } from './reconcile.js';
 
 const DEFAULT_CATEGORIES = [
   { id: 'alimentacao', nome: 'Alimentação', cor: '#7A8B69' },
@@ -21,7 +21,6 @@ let faturasList = []; // [{vencimento, arquivo, rows, importedAt}]
 let editingId = null;
 let currentVencimento = null;
 let vindoDaConciliacao = false;
-let lastAutoConfirmedIds = new Set();
 let pendingImport = null; // { vencimento, arquivo, rows, checksum, warnings, fromXlsx }
 
 let viewDate = new Date();
@@ -383,6 +382,35 @@ document.getElementById('backupBtn').addEventListener('click', async () => {
   renderLastBackupHint();
 });
 
+document.getElementById('resetAllBtn').addEventListener('click', async () => {
+  const ok = window.confirm('Isso apaga TODOS os lançamentos, categorias e faturas importadas deste aparelho, sem volta. Já fez backup? Toque OK só se tiver certeza.');
+  if (!ok) return;
+  await storage.resetAllData();
+  expenses = []; categories = []; faturasList = []; currentVencimento = null;
+  await loadAll();
+  setStatus('Todos os dados foram apagados.');
+});
+
+document.getElementById('exportFullBtn').addEventListener('click', () => {
+  const rows = buildFullReconciliationRows(faturasList, expenses);
+  if (!rows.length) { setStatus('Nada para exportar ainda — importe alguma fatura primeiro.', 'rcStatusMsg'); return; }
+  const sheetRows = rows.map((r) => ({
+    'Status': r.status,
+    'Data lançamento': r.dataLancamento,
+    'Descrição lançamento': r.descricaoLancamento,
+    'Categoria': r.categoria ? (catById(r.categoria) || {}).nome || r.categoria : '',
+    'Valor lançamento': r.valorLancamento,
+    'Vencimento fatura': r.vencimentoFatura,
+    'Data fatura': r.dataFatura,
+    'Descrição fatura': r.descricaoFatura,
+    'Parcela': r.parcela,
+    'Valor fatura': r.valorFatura,
+  }));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sheetRows), 'Conciliação completa');
+  offerDownload(wb, `conciliacao-completa-${todayISO()}.xlsx`);
+});
+
 function excelDateToISO(v) {
   if (v instanceof Date) return v.toISOString().slice(0, 10);
   if (typeof v === 'number') { const d = new Date(Math.round((v - 25569) * 86400 * 1000)); return d.toISOString().slice(0, 10); }
@@ -564,7 +592,6 @@ async function commitFaturaImport(imp) {
 
   const { updatedExpenses, confirmed } = autoConfirmParcelas(imp.rows, expenses);
   expenses = updatedExpenses;
-  lastAutoConfirmedIds = new Set(confirmed.map((c) => c.after.id));
   if (confirmed.length) await storage.putMany('expenses', confirmed.map((c) => c.after));
 
   const { toAdd, toRemoveIds } = syncPredictions(allFaturaRows(), expenses, categories);
@@ -589,7 +616,7 @@ async function commitFaturaImport(imp) {
 }
 
 function displayReconciliation(vencimento) {
-  const { autoMatched, matched, faturaUnmatched, appUnmatched } = runReconciliation(vencimento, allFaturaRows(), expenses, lastAutoConfirmedIds);
+  const { autoMatched, matched, faturaUnmatched, appUnmatched } = runReconciliation(vencimento, allFaturaRows(), expenses);
 
   document.getElementById('rcSummary').classList.add('show');
   document.getElementById('rcAutoN').textContent = autoMatched.length;
