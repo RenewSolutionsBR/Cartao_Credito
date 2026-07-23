@@ -74,7 +74,19 @@ async function loadAll() {
   if (faturasList.length) {
     currentVencimento = faturasList.map((f) => f.vencimento).sort().slice(-1)[0];
     displayReconciliation(currentVencimento);
+  } else {
+    currentVencimento = null;
+    clearReconciliationView();
   }
+}
+
+function clearReconciliationView() {
+  document.getElementById('rcSummary').classList.remove('show');
+  document.getElementById('rcAutoN').textContent = '0';
+  document.getElementById('rcOkN').textContent = '0';
+  document.getElementById('rcFaturaN').textContent = '0';
+  document.getElementById('rcAppN').textContent = '0';
+  document.getElementById('rcLists').innerHTML = '<div class="empty-state">Nenhuma fatura importada ainda.</div>';
 }
 
 /* ---------- Categorias ---------- */
@@ -480,7 +492,7 @@ document.querySelectorAll('.tab-btn').forEach((btn) => {
     document.getElementById('tab' + btn.dataset.tab).classList.add('active');
     document.getElementById('monthPickerWrap').style.display = btn.dataset.tab === 'Lancamentos' ? 'flex' : 'none';
     if (btn.dataset.tab === 'Parcelas') renderParcelas();
-    if (btn.dataset.tab === 'Conciliacao' && currentVencimento) displayReconciliation(currentVencimento);
+    if (btn.dataset.tab === 'Conciliacao') { if (currentVencimento) displayReconciliation(currentVencimento); else clearReconciliationView(); }
   });
 });
 
