@@ -113,33 +113,68 @@ function closestIndexByKey(pool, key, referenceDate) {
  * importada, procura entre os lançamentos previstos com a MESMA identidade (descrição +
  * data da compra original + total de parcelas) qual tem a data prevista mais próxima do
  * vencimento real — não exige que caia no mesmo mês "nominal", porque o Santander às vezes
- * emite duas faturas dentro do mesmo mês (ex.: uma no dia 1 e outra no dia 30), o que faria
- * a segunda não achar nenhuma previsão pendente se a exigência fosse mês idêntico. Ao
- * confirmar, a data do lançamento passa a ser a data de CORTE da fatura (não o vencimento):
- * a janela de conciliação de cada fatura termina no corte, alguns dias antes do vencimento —
- * se a parcela ficasse datada no vencimento, ela cairia fora da janela da própria fatura a
- * que pertence e nunca apareceria como conciliada. Sem corte conhecido (fatura sem essa
- * informação), cai no vencimento mesmo.
+ * emite duas faturas dentro do mesmo mês (ex.: uma no dia 1 e outra no dia 30). Quando a
+ * fatura mais recente conhecida de um grupo vence no dia 1 (em vez de por volta do dia 30),
+ * a previsão de meses futuros pode "pular" o próximo vencimento real (só 29 dias depois, não
+ * um mês de calendário completo) e não deixar nenhuma previsão pendente pra essa parcela — se
+ * isso acontecer, a linha "N/M" com N > 1 já é prova suficiente (vinda da própria fatura) de
+ * que a primeira parcela já foi cobrada antes, então concilia sozinha mesmo sem previsão
+ * batendo, sem exigir toque manual (só a parcela 1 de verdade precisa disso, por ser
+ * informação genuinamente nova). Ao confirmar, a data do lançamento passa a ser a data de
+ * CORTE da fatura (não o vencimento): a janela de conciliação de cada fatura termina no
+ * corte, alguns dias antes do vencimento — se a parcela ficasse datada no vencimento, cairia
+ * fora da janela da própria fatura a que pertence. Sem corte conhecido, cai no vencimento.
+ *
+ * IMPORTANTE: o lançamento confirmado ganha um id NOVO, num namespace ('confirmed_...')
+ * totalmente separado do namespace das previsões ('seed_...'), em vez de reaproveitar o id
+ * da previsão original. O id de uma previsão carrega o mês que ela mirava na hora em que foi
+ * criada — como esse mês pode mudar quando a previsão é recalculada depois (ex.: uma fatura
+ * no dia 1 faz a previsão "pular" o próximo vencimento real), o RECÁLCULO seguinte podia gerar
+ * uma previsão nova com o MESMO id do lançamento já confirmado, e a limpeza de previsões
+ * antigas acabava apagando a confirmação junto. Com namespaces sempre diferentes, isso nunca
+ * mais colide — a previsão antiga (id velho) é explicitamente removida à parte.
  */
-export function autoConfirmParcelas(faturaRows, expenses, dataCorte) {
+export function autoConfirmParcelas(faturaRows, expenses, dataCorte, categories) {
   const byId = new Map(expenses.map((e) => [e.id, e]));
   const confirmed = [];
+  const removedIds = [];
   const usedIds = new Set();
+  const catId = categories ? (categories.find((c) => c.nome.toLowerCase() === 'parcelamentos') || {}).id : null;
 
   for (const row of faturaRows) {
     if (row.tipo !== 'parcelamento') continue;
     const key = computeParcelaKey(row.descricao, row.data, row.parcela_total);
     const candidates = expenses.filter((e) => e.previsto && e.parcelaKey === key && !usedIds.has(e.id));
-    if (!candidates.length) continue;
-    candidates.sort((a, b) => dateDiffDays(a.data, row.vencimento) - dateDiffDays(b.data, row.vencimento));
-    const candidate = candidates[0];
-    usedIds.add(candidate.id);
-    const updated = { ...candidate, previsto: false, descricao: candidate.descricao.replace(/\s*\(parcela prevista\)\s*$/i, ''), valor: row.valor, data: dataCorte || row.vencimento, conciliadoAutomaticamente: true, parcela_atual: row.parcela_atual, parcela_total: row.parcela_total };
+    let candidate = null;
+    if (candidates.length) {
+      candidates.sort((a, b) => dateDiffDays(a.data, row.vencimento) - dateDiffDays(b.data, row.vencimento));
+      candidate = candidates[0];
+    }
+    if (!candidate && !(row.parcela_atual > 1)) continue; // parcela 1 de verdade: precisa confirmação manual
+
+    const descricaoBase = (candidate ? candidate.descricao : row.descricao).replace(/\s*\(parcela prevista\)\s*$/i, '');
+    const newId = `confirmed_${key.replace(/[^a-zA-Z0-9]/g, '_')}_${row.vencimento}`;
+    if (candidate) {
+      usedIds.add(candidate.id);
+      if (candidate.id !== newId) { byId.delete(candidate.id); removedIds.push(candidate.id); }
+    }
+    const updated = {
+      id: newId,
+      descricao: descricaoBase,
+      valor: row.valor,
+      data: dataCorte || row.vencimento,
+      categoria: candidate ? candidate.categoria : (catId || 'outros'),
+      previsto: false,
+      conciliadoAutomaticamente: true,
+      parcela_atual: row.parcela_atual,
+      parcela_total: row.parcela_total,
+      parcelaKey: key,
+    };
     byId.set(updated.id, updated);
     confirmed.push({ before: candidate, after: updated, faturaRow: row });
   }
 
-  return { updatedExpenses: [...byId.values()], confirmed };
+  return { updatedExpenses: [...byId.values()], confirmed, removedIds };
 }
 
 /**

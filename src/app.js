@@ -625,9 +625,10 @@ async function commitFaturaImport(imp) {
   faturasList = [...faturasList.filter((f) => f.vencimento !== imp.vencimento), faturaRecord];
   await storage.put('faturas', faturaRecord);
 
-  const { updatedExpenses, confirmed } = autoConfirmParcelas(imp.rows, expenses, imp.dataCorte);
+  const { updatedExpenses, confirmed, removedIds } = autoConfirmParcelas(imp.rows, expenses, imp.dataCorte, categories);
   expenses = updatedExpenses;
   if (confirmed.length) await storage.putMany('expenses', confirmed.map((c) => c.after));
+  if (removedIds && removedIds.length) await Promise.all(removedIds.map((id) => storage.remove('expenses', id)));
 
   const { toAdd, toRemoveIds } = syncPredictions(allFaturaRows(), expenses, categories);
   if (toRemoveIds.length) {
