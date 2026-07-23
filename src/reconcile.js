@@ -119,7 +119,7 @@ export function autoConfirmParcelas(faturaRows, expenses, dataCorte) {
     candidates.sort((a, b) => dateDiffDays(a.data, row.vencimento) - dateDiffDays(b.data, row.vencimento));
     const candidate = candidates[0];
     usedIds.add(candidate.id);
-    const updated = { ...candidate, previsto: false, descricao: candidate.descricao.replace(/\s*\(parcela prevista\)\s*$/i, ''), valor: row.valor, data: dataCorte || row.vencimento, conciliadoAutomaticamente: true };
+    const updated = { ...candidate, previsto: false, descricao: candidate.descricao.replace(/\s*\(parcela prevista\)\s*$/i, ''), valor: row.valor, data: dataCorte || row.vencimento, conciliadoAutomaticamente: true, parcela_atual: row.parcela_atual, parcela_total: row.parcela_total };
     byId.set(updated.id, updated);
     confirmed.push({ before: candidate, after: updated, faturaRow: row });
   }

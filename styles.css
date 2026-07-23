@@ -96,6 +96,8 @@ form.entry-form .full{grid-column:1 / -1;}
 .rc-row .rc-date{ font-family:var(--font-mono); color:var(--text-muted); font-size:0.75rem; width:60px; flex-shrink:0; }
 .rc-row .rc-desc{ flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .rc-row .rc-val{ font-family:var(--font-mono); font-variant-numeric:tabular-nums; white-space:nowrap; font-size:0.85rem; }
+.rc-row .rc-parc{ font-family:var(--font-mono); font-size:0.68rem; color:var(--brass-dark); white-space:nowrap; flex-shrink:0; }
+.entry-row .parc{ font-family:var(--font-mono); font-size:0.68rem; color:var(--brass-dark); }
 .rc-row .rc-add{ background:none; border:1px solid var(--brass); color:var(--brass-dark); border-radius:3px; font-size:0.66rem; padding:3px 6px; cursor:pointer; white-space:nowrap; font-family:var(--font-body); }
 .rc-row .rc-auto-tag{ font-size:0.62rem; color:var(--dusty-blue); border:1px solid var(--dusty-blue); border-radius:3px; padding:2px 5px; white-space:nowrap; }
 

@@ -22,6 +22,8 @@ let editingId = null;
 let currentVencimento = null;
 let vindoDaConciliacao = false;
 let pendingParcelaKey = null;
+let pendingParcelaAtual = null;
+let pendingParcelaTotal = null;
 let pendingImport = null; // { vencimento, arquivo, rows, checksum, warnings, fromXlsx }
 
 let viewDate = new Date();
@@ -172,10 +174,11 @@ function render() {
       const cat = catById(e.categoria);
       const catNome = cat ? cat.nome : 'Sem categoria';
       const catCor = cat ? cat.cor : 'var(--grey)';
+      const parcelaTxt = e.parcela_atual ? ` <span class="parc">${e.parcela_atual}/${e.parcela_total}</span>` : '';
       html += `
         <div class="entry-row" data-id="${e.id}">
           <span class="dot" style="background:${catCor}"></span>
-          <span class="desc">${escapeHtml(e.descricao)}<span class="cat">${escapeHtml(catNome)}</span></span>
+          <span class="desc">${escapeHtml(e.descricao)}${parcelaTxt}<span class="cat">${escapeHtml(catNome)}</span></span>
           <span class="amt">${fmtBRL(e.valor)}</span>
           <button class="edit" data-id="${e.id}" aria-label="Editar">✎</button>
           <button class="del" data-id="${e.id}" aria-label="Excluir">✕</button>
@@ -213,6 +216,8 @@ function cancelEdit() {
   editingId = null;
   vindoDaConciliacao = false;
   pendingParcelaKey = null;
+  pendingParcelaAtual = null;
+  pendingParcelaTotal = null;
   document.getElementById('entryForm').reset();
   setDataField(todayISO());
   document.getElementById('submitBtn').textContent = 'Lançar gasto';
@@ -324,7 +329,11 @@ document.getElementById('submitBtn').addEventListener('click', async () => {
       setStatus('Lançamento atualizado.');
     } else {
       const novo = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7), descricao: desc, valor, data, categoria };
-      if (pendingParcelaKey) { novo.parcelaKey = pendingParcelaKey; pendingParcelaKey = null; }
+      if (pendingParcelaKey) {
+        novo.parcelaKey = pendingParcelaKey;
+        if (pendingParcelaAtual) { novo.parcela_atual = pendingParcelaAtual; novo.parcela_total = pendingParcelaTotal; }
+        pendingParcelaKey = null; pendingParcelaAtual = null; pendingParcelaTotal = null;
+      }
       expenses.push(novo);
       await storage.put('expenses', novo);
       document.getElementById('entryForm').reset();
@@ -348,17 +357,20 @@ document.getElementById('prevMonth').addEventListener('click', () => { viewDate.
 document.getElementById('nextMonth').addEventListener('click', () => { viewDate.setMonth(viewDate.getMonth() + 1); render(); });
 
 /* ---------- Export / backup ---------- */
-async function offerDownload(wb, filename) {
+async function offerDownload(wb, filename, opts) {
+  const skipShare = opts && opts.skipShare;
   const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
   const blob = new Blob([wbout], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-  try {
-    const file = new File([blob], filename, { type: blob.type });
-    if (navigator.canShare && navigator.canShare({ files: [file] })) {
-      await navigator.share({ files: [file], title: filename });
-      setStatus('Compartilhado — escolha onde salvar.');
-      return;
-    }
-  } catch (e) { /* usuário cancelou o share, cai no link abaixo */ }
+  if (!skipShare) {
+    try {
+      const file = new File([blob], filename, { type: blob.type });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file], title: filename });
+        setStatus('Compartilhado — escolha onde salvar.');
+        return;
+      }
+    } catch (e) { /* usuário cancelou o share, cai no link abaixo */ }
+  }
   const url = URL.createObjectURL(blob);
   const link = document.getElementById('downloadLink');
   link.href = url;
@@ -425,7 +437,7 @@ document.getElementById('exportFullBtn').addEventListener('click', async () => {
     }));
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sheetRows), 'Conciliação completa');
-    await offerDownload(wb, `conciliacao-completa-${todayISO()}.xlsx`);
+    await offerDownload(wb, `conciliacao-completa-${todayISO()}.xlsx`, { skipShare: true });
   } catch (err) {
     setStatus('Erro ao exportar: ' + err.message, 'rcStatusMsg');
   }
@@ -647,10 +659,12 @@ function displayReconciliation(vencimento) {
   document.getElementById('rcFaturaN').textContent = faturaUnmatched.length;
   document.getElementById('rcAppN').textContent = appUnmatched.length;
 
-  const rowHtml = (dataIso, desc, val, extra) => `
+  const parcelaStr = (atual, total) => (atual ? `${atual}/${total}` : '');
+  const rowHtml = (dataIso, desc, val, parcela, extra) => `
     <div class="rc-row">
       <span class="rc-date">${new Date(dataIso + 'T00:00:00').toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}</span>
       <span class="rc-desc">${escapeHtml(desc)}</span>
+      ${parcela ? `<span class="rc-parc">${parcela}</span>` : ''}
       <span class="rc-val">${fmtBRL(val)}</span>
       ${extra || ''}
     </div>`;
@@ -658,21 +672,24 @@ function displayReconciliation(vencimento) {
   let html = '';
   if (autoMatched.length) {
     html += `<div class="rc-group-title">🔵 Parcelas conciliadas automaticamente (${autoMatched.length})</div>`;
-    html += autoMatched.map((m) => rowHtml(m.fatura.data, m.fatura.descricao, m.fatura.valor, '<span class="rc-auto-tag">automático</span>')).join('');
+    html += autoMatched.map((m) => rowHtml(m.fatura.data, m.fatura.descricao, m.fatura.valor, parcelaStr(m.fatura.parcela_atual, m.fatura.parcela_total), '<span class="rc-auto-tag">automático</span>')).join('');
   }
 
   html += `<div class="rc-group-title">⚠️ Na fatura, não lançado no app (${faturaUnmatched.length})</div>`;
   html += faturaUnmatched.length ? faturaUnmatched.map((i) => {
     const key = i.tipo === 'parcelamento' ? computeParcelaKey(i.descricao, i.data, i.parcela_total) : '';
-    return rowHtml(i.data, i.descricao, i.valor, `<button class="rc-add" data-desc="${escapeHtml(i.descricao)}" data-valor="${i.valor}" data-data="${i.tipo === 'parcelamento' ? dataParcelaManual : i.data}" data-parcelakey="${escapeHtml(key)}">+ lançar</button>`);
+    const btnAttrs = i.tipo === 'parcelamento'
+      ? ` data-parcelakey="${escapeHtml(key)}" data-parcela-atual="${i.parcela_atual || ''}" data-parcela-total="${i.parcela_total || ''}"`
+      : '';
+    return rowHtml(i.data, i.descricao, i.valor, parcelaStr(i.parcela_atual, i.parcela_total), `<button class="rc-add" data-desc="${escapeHtml(i.descricao)}" data-valor="${i.valor}" data-data="${i.tipo === 'parcelamento' ? dataParcelaManual : i.data}"${btnAttrs}>+ lançar</button>`);
   }).join('') : `<div class="empty-state" style="padding:10px 0;">Nenhum — tudo que está na fatura já foi lançado.</div>`;
 
   html += `<div class="rc-group-title">⚠️ Lançado no app, não aparece na fatura (${appUnmatched.length})</div>`;
-  html += appUnmatched.length ? appUnmatched.map((e) => rowHtml(e.data, e.descricao, e.valor)).join('')
+  html += appUnmatched.length ? appUnmatched.map((e) => rowHtml(e.data, e.descricao, e.valor, parcelaStr(e.parcela_atual, e.parcela_total))).join('')
     : `<div class="empty-state" style="padding:10px 0;">Nenhum — tudo que você lançou aparece na fatura.</div>`;
 
   html += `<div class="rc-group-title">✓ Conciliados manualmente (${matched.length})</div>`;
-  html += matched.length ? matched.map((m) => rowHtml(m.fatura.data, m.fatura.descricao, m.fatura.valor)).join('')
+  html += matched.length ? matched.map((m) => rowHtml(m.fatura.data, m.fatura.descricao, m.fatura.valor, parcelaStr(m.fatura.parcela_atual, m.fatura.parcela_total))).join('')
     : `<div class="empty-state" style="padding:10px 0;">Nenhum lançamento conciliado manualmente ainda.</div>`;
 
   document.getElementById('rcLists').innerHTML = html;
@@ -686,6 +703,8 @@ function displayReconciliation(vencimento) {
       document.getElementById('desc').focus();
       vindoDaConciliacao = true;
       pendingParcelaKey = btn.dataset.parcelakey || null;
+      pendingParcelaAtual = btn.dataset.parcelaAtual ? parseInt(btn.dataset.parcelaAtual, 10) : null;
+      pendingParcelaTotal = btn.dataset.parcelaTotal ? parseInt(btn.dataset.parcelaTotal, 10) : null;
     });
   });
 }
