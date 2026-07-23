@@ -544,7 +544,8 @@ document.getElementById('fileFatura').addEventListener('change', async (ev) => {
 });
 
 function openPreview(imp) {
-  document.getElementById('previewTitle').textContent = `Fatura de ${new Date(imp.vencimento + 'T00:00:00').toLocaleDateString('pt-BR')} — ${imp.arquivo}`;
+  const corteTxt = imp.dataCorte ? ` · compras até ${new Date(imp.dataCorte + 'T00:00:00').toLocaleDateString('pt-BR')}` : '';
+  document.getElementById('previewTitle').textContent = `Fatura de ${new Date(imp.vencimento + 'T00:00:00').toLocaleDateString('pt-BR')}${corteTxt} — ${imp.arquivo}`;
   const banner = document.getElementById('previewChecksumBanner');
   const confirmBtn = document.getElementById('previewConfirmBtn');
   if (imp.checksum.ok) {
@@ -586,7 +587,7 @@ document.getElementById('previewConfirmBtn').addEventListener('click', async () 
 });
 
 async function commitFaturaImport(imp) {
-  const faturaRecord = { vencimento: imp.vencimento, arquivo: imp.arquivo, rows: imp.rows, importedAt: Date.now() };
+  const faturaRecord = { vencimento: imp.vencimento, dataCorte: imp.dataCorte || null, arquivo: imp.arquivo, rows: imp.rows, importedAt: Date.now() };
   faturasList = [...faturasList.filter((f) => f.vencimento !== imp.vencimento), faturaRecord];
   await storage.put('faturas', faturaRecord);
 
@@ -616,7 +617,7 @@ async function commitFaturaImport(imp) {
 }
 
 function displayReconciliation(vencimento) {
-  const { autoMatched, matched, faturaUnmatched, appUnmatched } = runReconciliation(vencimento, allFaturaRows(), expenses);
+  const { autoMatched, matched, faturaUnmatched, appUnmatched } = runReconciliation(vencimento, faturasList, expenses);
 
   document.getElementById('rcSummary').classList.add('show');
   document.getElementById('rcAutoN').textContent = autoMatched.length;

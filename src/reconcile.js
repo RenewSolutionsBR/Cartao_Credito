@@ -125,6 +125,30 @@ export function autoConfirmParcelas(faturaRows, expenses) {
 }
 
 /**
+ * Calcula a janela real de conciliação de uma fatura: termina na data de corte da PRÓPRIA
+ * fatura (extraída do PDF — "...compras realizadas até DD/MM") e começa no dia seguinte ao
+ * corte da fatura ANTERIOR, cobrindo exatamente o período de compras entre as duas, sem
+ * sobra nem lacuna. Sem essa informação (fatura importada via planilha, ou fatura anterior
+ * desconhecida), cai numa estimativa de 35 dias antes do corte.
+ */
+function getReconciliationWindow(faturasList, vencimento) {
+  const sorted = [...faturasList].sort((a, b) => (a.vencimento < b.vencimento ? -1 : 1));
+  const idx = sorted.findIndex((f) => f.vencimento === vencimento);
+  const fatura = idx >= 0 ? sorted[idx] : null;
+  const windowEnd = fatura && fatura.dataCorte ? new Date(fatura.dataCorte) : new Date(vencimento);
+  const prev = idx > 0 ? sorted[idx - 1] : null;
+  let windowStart;
+  if (prev && prev.dataCorte) {
+    windowStart = new Date(prev.dataCorte);
+    windowStart.setDate(windowStart.getDate() + 1);
+  } else {
+    windowStart = new Date(windowEnd);
+    windowStart.setDate(windowStart.getDate() - 35);
+  }
+  return { windowStart, windowEnd };
+}
+
+/**
  * Monta os buckets exibidos na aba Conciliação para uma fatura (vencimento) específica:
  * conciliados automaticamente (parcelas confirmadas por identidade, sem toque nenhum),
  * conciliados manualmente, só na fatura (precisa de "+ lançar") e só no app. A marca de
@@ -132,10 +156,10 @@ export function autoConfirmParcelas(faturaRows, expenses) {
  * permanentemente quando a confirmação acontece) — não depende de qual foi a última fatura
  * importada na sessão, então não se perde ao trocar de aba ou reabrir o app.
  */
-export function runReconciliation(vencimento, allFaturaRows, expenses) {
-  const items = allFaturaRows.filter((r) => r.vencimento === vencimento);
-  const windowStart = new Date(vencimento); windowStart.setDate(windowStart.getDate() - 40);
-  const windowEnd = new Date(vencimento);
+export function runReconciliation(vencimento, faturasList, expenses) {
+  const fatura = faturasList.find((f) => f.vencimento === vencimento);
+  const items = fatura ? fatura.rows : [];
+  const { windowStart, windowEnd } = getReconciliationWindow(faturasList, vencimento);
   const appPool = expenses
     .filter((e) => new Date(e.data) >= windowStart && new Date(e.data) <= windowEnd)
     .map((e) => ({ ...e, used: false }));
@@ -165,8 +189,8 @@ export function runReconciliation(vencimento, allFaturaRows, expenses) {
  * Monta a base pro "Exportar conciliação completa": percorre todas as faturas importadas
  * em ordem cronológica, casando cada lançamento da fatura com um lançamento real do app (o
  * mesmo critério usado na aba Conciliação) sem deixar um lançamento ser reaproveitado em
- * duas faturas diferentes — importante porque as janelas de ±40 dias de faturas vizinhas se
- * sobrepõem. O que sobrar de lançamento real sem casar em nenhuma fatura vira "Só no app".
+ * duas faturas diferentes. O que sobrar de lançamento real sem casar em nenhuma fatura vira
+ * "Só no app".
  */
 export function buildFullReconciliationRows(faturasList, allExpenses) {
   const pool = allExpenses.filter((e) => !e.previsto).map((e) => ({ ...e, used: false }));
@@ -174,8 +198,7 @@ export function buildFullReconciliationRows(faturasList, allExpenses) {
   const sortedFaturas = [...faturasList].sort((a, b) => (a.vencimento < b.vencimento ? -1 : 1));
 
   sortedFaturas.forEach((fatura) => {
-    const windowStart = new Date(fatura.vencimento); windowStart.setDate(windowStart.getDate() - 40);
-    const windowEnd = new Date(fatura.vencimento);
+    const { windowStart, windowEnd } = getReconciliationWindow(faturasList, fatura.vencimento);
     fatura.rows.forEach((item) => {
       const idx = item.tipo === 'parcelamento'
         ? pool.findIndex((e) => !e.used && new Date(e.data) >= windowStart && new Date(e.data) <= windowEnd && Math.abs(e.valor - item.valor) < 0.01)

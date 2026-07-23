@@ -137,23 +137,46 @@ function clusterRowsWithY(items, yTol = 2.2) {
   return rows.map(({ y, items: r }) => ({ y, text: r.sort((a, b) => a.x - b.x).map((it) => it.str).join(' ').replace(/\s+/g, ' ').trim() }));
 }
 
-async function extractLines(arrayBuffer) {
-  const pdfjsLib = await getPdfjs();
-  const doc = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+async function getPageItems(page) {
+  const content = await page.getTextContent();
+  return content.items
+    .filter((it) => it.str && it.str.trim().length > 0)
+    .map((it) => ({ str: it.str.trim(), x: it.transform[4], y: it.transform[5] }));
+}
+
+async function extractLines(doc) {
   const allLines = [];
   let inDetail = false;
   for (let pageNo = 1; pageNo <= doc.numPages; pageNo++) {
     const page = await doc.getPage(pageNo);
-    const content = await page.getTextContent();
-    const items = content.items
-      .filter((it) => it.str && it.str.trim().length > 0)
-      .map((it) => ({ str: it.str.trim(), x: it.transform[4], y: it.transform[5] }));
+    const items = await getPageItems(page);
     const { lines, stillInDetail } = reconstructPageLines(items, inDetail);
     inDetail = stillInDetail;
     allLines.push(...lines);
     if (lines.some((l) => /^Resumo da Fatura/i.test(l.trim()))) break;
   }
   return allLines;
+}
+
+// "...contendo compras e pagamentos realizados até DD/MM." na página 1 — é a data de corte
+// real da fatura (fim do período de compras), presente em 100% dos formatos de fatura já
+// vistos (mudou o layout do PDF ao longo do tempo, mas essa frase sempre aparece igual).
+// Usamos ela pra fazer a janela de conciliação bater com o período real de cada fatura, em
+// vez de uma estimativa fixa de dias antes do vencimento.
+const CUTOFF_RE = /realizados?\D*?at[éeè]\s+(\d{2})\/(\d{2})|^at[éeè]\s+(\d{2})\/(\d{2})/i;
+async function extractCutoffDate(doc, vencimentoDate) {
+  const page = await doc.getPage(1);
+  const items = await getPageItems(page);
+  const lines = reconstructSegment(items);
+  for (const line of lines.slice(0, 20)) {
+    const m = CUTOFF_RE.exec(line.trim());
+    if (m) {
+      const dd = parseInt(m[1] || m[3], 10);
+      const mm = parseInt(m[2] || m[4], 10);
+      return resolveDate(dd, mm, vencimentoDate);
+    }
+  }
+  return null;
 }
 
 // Resolve o ano de uma data DD/MM dada como referência o vencimento da fatura: escolhe o
@@ -202,10 +225,12 @@ const PARCELA_TAG_RE = /(\d{2})\/(\d{2})\s*$/; // capturado à parte, DEPOIS de 
 
 /**
  * Faz o parsing completo de uma fatura em PDF.
- * @returns {{vencimento:string, arquivo:string, rows:Array, checksum:{ok:boolean, sections:Array}, warnings:string[]}}
+ * @returns {{vencimento:string, dataCorte:string|null, arquivo:string, rows:Array, checksum:{ok:boolean, sections:Array}, warnings:string[]}}
  */
 export async function parseFaturaPdf(arrayBuffer, filename) {
-  const lines = await extractLines(arrayBuffer);
+  const pdfjsLib = await getPdfjs();
+  const doc = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+  const lines = await extractLines(doc);
   const warnings = [];
 
   let vencimentoDate = vencimentoFromFilename(filename);
@@ -216,6 +241,10 @@ export async function parseFaturaPdf(arrayBuffer, filename) {
   if (!vencimentoDate) {
     throw new Error('Não consegui identificar a data de vencimento desta fatura (nem pelo nome do arquivo, nem pelo texto). Renomeie o arquivo para o padrão "Visa-DD-MM-AAAA.pdf" (data do vencimento) e tente de novo.');
   }
+
+  let dataCorteDate = null;
+  try { dataCorteDate = await extractCutoffDate(doc, vencimentoDate); } catch (e) { /* segue sem corte, cai no fallback da janela */ }
+  if (!dataCorteDate) warnings.push('Não encontrei a data de corte ("...até DD/MM") no PDF — a janela de conciliação vai usar uma estimativa.');
 
   const rows = [];
   const sections = []; // checksum por bloco de cartão: {cardEnding, expected, computed, ok}
@@ -320,5 +349,5 @@ export async function parseFaturaPdf(arrayBuffer, filename) {
   const checksum = { ok: sections.length > 0 && sections.every((s) => s.ok), sections };
   if (sections.length === 0) warnings.push('Não encontrei nenhuma seção "VALOR TOTAL" pra conferir — não foi possível validar esta fatura automaticamente.');
 
-  return { vencimento: toISO(vencimentoDate), arquivo: filename, rows, checksum, warnings };
+  return { vencimento: toISO(vencimentoDate), dataCorte: dataCorteDate ? toISO(dataCorteDate) : null, arquivo: filename, rows, checksum, warnings };
 }
