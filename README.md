@@ -5,6 +5,11 @@ instalável no celular. Sucessor do `gastos-app.html` que rodava como artefato n
 Claude — agora roda sozinho, com dados salvos localmente (IndexedDB) e leitura automática
 do PDF da fatura, sem depender de IA nem de internet no dia a dia.
 
+- **Manual do usuário** (todas as telas, instalação Android/iPhone, recomendações de uso):
+  [`docs/MANUAL_USUARIO.md`](docs/MANUAL_USUARIO.md)
+- **Documentação técnica** (modelo de dados, algoritmos de conciliação, limitações
+  conhecidas): [`docs/DOCUMENTACAO_TECNICA.md`](docs/DOCUMENTACAO_TECNICA.md)
+
 ## O que mudou em relação ao `gastos-app.html`
 
 - **Instalável**: PWA de verdade (ícone na tela inicial, abre em tela cheia, funciona offline).

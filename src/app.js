@@ -32,6 +32,34 @@ viewDate.setDate(1);
 
 function allFaturaRows() { return faturasList.flatMap((f) => f.rows); }
 
+function normalizeDescLoose(s) { return String(s || '').trim().toUpperCase().replace(/\s+/g, ' '); }
+
+// Antes de criar uma compra parcelada "do zero" (checkbox de Lançamentos), verifica se ela já
+// tem algo ligado no app — por identidade exata (mesma chave) ou por uma pista mais fraca: uma
+// linha de fatura já importada com descrição parecida e parcela_atual > 1, o que prova que a
+// compra já vinha de antes (a fatura já deve ter conciliado alguma parcela dela sozinha) e não
+// deveria ser recomeçada do zero como "1/N" — evita duplicar o que a conciliação já criou.
+function findParcelaDuplicates(desc, data, n) {
+  const key = computeParcelaKey(desc, data, n);
+  const normDesc = normalizeDescLoose(desc);
+  const fuzzyRows = allFaturaRows().filter((r) => r.tipo === 'parcelamento' && r.parcela_atual > 1 &&
+    (normalizeDescLoose(r.descricao).includes(normDesc) || normDesc.includes(normalizeDescLoose(r.descricao))));
+  const fuzzyKeys = new Set(fuzzyRows.map((r) => computeParcelaKey(r.descricao, r.data, r.parcela_total)));
+  const matches = expenses.filter((e) => e.parcelaKey === key || (e.parcelaKey && fuzzyKeys.has(e.parcelaKey)));
+  return matches;
+}
+
+// Quando o usuário classifica (ou reclassifica) uma parcela, propaga a categoria pras outras
+// parcelas da MESMA compra (reais e previstas) — sem isso, cada parcela podia ficar com uma
+// categoria diferente dependendo de quando/como cada uma foi confirmada.
+async function syncCategoriaAcrossParcelas(parcelaKey, categoria) {
+  if (!parcelaKey) return;
+  const siblings = expenses.filter((x) => x.parcelaKey === parcelaKey && x.categoria !== categoria);
+  if (!siblings.length) return;
+  siblings.forEach((x) => { x.categoria = categoria; });
+  await storage.putMany('expenses', siblings);
+}
+
 function fmtBRL(n) { return 'R$ ' + n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 function parseMoneyBR(str) {
   if (str == null) return NaN;
@@ -298,6 +326,17 @@ document.getElementById('submitBtn').addEventListener('click', async () => {
       if (!data) { setStatus('Data inválida — use o formato DD/MM/AAAA.'); return; }
       if (isNaN(total)) { setStatus('Valor total inválido — use vírgula ou ponto, ex: 1200,00.'); return; }
       if (!n || n < 2) { setStatus('Número de parcelas precisa ser 2 ou mais.'); return; }
+
+      const duplicatas = findParcelaDuplicates(desc, data, n);
+      if (duplicatas.length) {
+        const resumo = duplicatas.slice(0, 5).map((m) => `• ${m.descricao} — ${formatDateBR(m.data)} — ${fmtBRL(m.valor)}`).join('\n');
+        const ok = window.confirm(`Já existe(m) ${duplicatas.length} lançamento(s) ligado(s) a uma compra parecida (provavelmente já conciliada pela fatura):\n\n${resumo}\n\nSe continuar, esses lançamentos serão apagados e substituídos pelos ${n} que você está criando agora. Deseja continuar?`);
+        if (!ok) { setStatus('Cancelado — já existe uma compra parecida lançada.'); return; }
+        const idsRemover = new Set(duplicatas.map((m) => m.id));
+        expenses = expenses.filter((e) => !idsRemover.has(e.id));
+        await Promise.all([...idsRemover].map((id) => storage.remove('expenses', id)));
+      }
+
       const vals = splitParcelas(total, n);
       const grupoId = 'grp_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
       const parcelaKey = computeParcelaKey(desc, data, n);
@@ -340,7 +379,11 @@ document.getElementById('submitBtn').addEventListener('click', async () => {
 
     if (editingId) {
       const e = expenses.find((x) => x.id === editingId);
-      if (e) { e.descricao = desc; e.valor = valor; e.data = data; e.categoria = categoria; await storage.put('expenses', e); }
+      if (e) {
+        e.descricao = desc; e.valor = valor; e.data = data; e.categoria = categoria;
+        await storage.put('expenses', e);
+        if (e.parcelaKey) await syncCategoriaAcrossParcelas(e.parcelaKey, categoria);
+      }
       cancelEdit();
       setStatus('Lançamento atualizado.');
     } else {
@@ -352,6 +395,7 @@ document.getElementById('submitBtn').addEventListener('click', async () => {
       }
       expenses.push(novo);
       await storage.put('expenses', novo);
+      if (novo.parcelaKey) await syncCategoriaAcrossParcelas(novo.parcelaKey, categoria);
       document.getElementById('entryForm').reset();
       setDataField(todayISO());
       setStatus('Lançamento salvo.');
@@ -531,6 +575,7 @@ document.querySelectorAll('.tab-btn').forEach((btn) => {
     document.getElementById('monthPickerWrap').style.display = btn.dataset.tab === 'Lancamentos' ? 'flex' : 'none';
     if (btn.dataset.tab === 'Parcelas') renderParcelas();
     if (btn.dataset.tab === 'Conciliacao') { if (currentVencimento) displayReconciliation(currentVencimento); else clearReconciliationView(); }
+    if (btn.dataset.tab === 'Dashboard') renderDashboard();
   });
 });
 
@@ -766,6 +811,100 @@ function renderParcelas() {
       <div class="pc-months">próximas: ${g.months.map((m) => m.label).join(', ')}</div>
     </div>`).join('');
 }
+
+/* ---------- Dashboard ---------- */
+function monthNamePt(i) { return new Date(2000, i, 1).toLocaleDateString('pt-BR', { month: 'long' }); }
+function monthAbbrPt(i) { return new Date(2000, i, 1).toLocaleDateString('pt-BR', { month: 'short' }).replace('.', ''); }
+
+function populateDashFilters() {
+  const years = [...new Set(expenses.filter((e) => !e.previsto).map((e) => e.data.slice(0, 4)))].sort();
+  const list = years.length ? years : [String(new Date().getFullYear())];
+  const ySel = document.getElementById('dashYear');
+  const prevVal = ySel.value;
+  ySel.innerHTML = list.map((y) => `<option value="${y}">${y}</option>`).join('');
+  ySel.value = list.includes(prevVal) ? prevVal : list[list.length - 1];
+}
+
+// Só considera lançamentos REAIS (não previsto) — o Dashboard mostra gasto que já aconteceu,
+// não projeção de parcelas futuras, senão os meses seguintes ficariam inflados por previsão.
+function renderDashboard() {
+  populateDashFilters();
+  const year = document.getElementById('dashYear').value;
+  const monthSel = document.getElementById('dashMonth').value; // '' (ano inteiro) ou '0'..'11'
+
+  const real = expenses.filter((e) => !e.previsto);
+  const inPeriod = (e) => e.data.slice(0, 4) === year && (monthSel === '' || parseInt(e.data.slice(5, 7), 10) - 1 === parseInt(monthSel, 10));
+  const periodExpenses = real.filter(inPeriod);
+  const total = periodExpenses.reduce((s, e) => s + e.valor, 0);
+  document.getElementById('dashTotal').textContent = fmtBRL(total);
+
+  let prevTotal = 0;
+  if (monthSel === '') {
+    const prevYear = String(parseInt(year, 10) - 1);
+    prevTotal = real.filter((e) => e.data.slice(0, 4) === prevYear).reduce((s, e) => s + e.valor, 0);
+  } else {
+    const m = parseInt(monthSel, 10);
+    let py = parseInt(year, 10), pm = m - 1;
+    if (pm < 0) { pm = 11; py -= 1; }
+    const pyStr = String(py), pmStr = String(pm + 1).padStart(2, '0');
+    prevTotal = real.filter((e) => e.data.slice(0, 4) === pyStr && e.data.slice(5, 7) === pmStr).reduce((s, e) => s + e.valor, 0);
+  }
+  const deltaEl = document.getElementById('dashDelta');
+  if (prevTotal > 0) {
+    const pct = ((total - prevTotal) / prevTotal) * 100;
+    deltaEl.textContent = `${pct >= 0 ? '+' : ''}${pct.toFixed(0)}%`;
+    deltaEl.className = 'value' + (pct > 0 ? ' up' : pct < 0 ? ' down' : '');
+  } else {
+    deltaEl.textContent = total > 0 ? 'novo' : '—';
+    deltaEl.className = 'value';
+  }
+
+  const byCat = {};
+  periodExpenses.forEach((e) => { byCat[e.categoria] = (byCat[e.categoria] || 0) + e.valor; });
+  const catEntries = Object.keys(byCat).map((cid) => ({ cid, val: byCat[cid], cat: catById(cid) })).sort((a, b) => b.val - a.val);
+  const donutEl = document.getElementById('dashDonut');
+  const legendEl = document.getElementById('dashLegend');
+  if (!catEntries.length || total <= 0) {
+    donutEl.style.background = 'var(--paper-line)';
+    legendEl.innerHTML = '<div class="empty-state" style="padding:6px 0;">Nada lançado neste período.</div>';
+  } else {
+    let acc = 0;
+    const stops = catEntries.map((c) => {
+      const from = (acc / total) * 100;
+      acc += c.val;
+      const to = (acc / total) * 100;
+      const cor = (c.cat && c.cat.cor) || '#8A8578';
+      return `${cor} ${from.toFixed(2)}% ${to.toFixed(2)}%`;
+    }).join(', ');
+    donutEl.style.background = `conic-gradient(${stops})`;
+    legendEl.innerHTML = catEntries.map((c) => {
+      const pct = (c.val / total) * 100;
+      const nome = (c.cat && c.cat.nome) || 'Sem categoria';
+      const cor = (c.cat && c.cat.cor) || '#8A8578';
+      return `<div class="dash-legend-row"><span class="dot" style="background:${cor}"></span><span class="name">${escapeHtml(nome)}</span><span class="pct">${pct.toFixed(0)}% · ${fmtBRL(c.val)}</span></div>`;
+    }).join('');
+  }
+
+  const byMonth = new Array(12).fill(0);
+  real.filter((e) => e.data.slice(0, 4) === year).forEach((e) => { byMonth[parseInt(e.data.slice(5, 7), 10) - 1] += e.valor; });
+  const maxMonth = Math.max(...byMonth, 0.01);
+  document.getElementById('dashBars').innerHTML = byMonth.map((v, i) => {
+    const h = Math.max(2, Math.round((v / maxMonth) * 100));
+    const isSel = monthSel !== '' && parseInt(monthSel, 10) === i;
+    return `<div class="dash-bar-col" title="${monthNamePt(i)}: ${fmtBRL(v)}">
+      <div class="bar${isSel ? ' current' : ''}" style="height:${h}%"></div>
+      <div class="m-label">${monthAbbrPt(i)}</div>
+    </div>`;
+  }).join('');
+
+  const top5 = [...periodExpenses].sort((a, b) => b.valor - a.valor).slice(0, 5);
+  document.getElementById('dashTop5').innerHTML = top5.length ? top5.map((e, i) => {
+    const cat = catById(e.categoria);
+    return `<div class="dash-top5-row"><span class="rank">${i + 1}º</span><span class="desc">${escapeHtml(e.descricao)}<span style="display:block;font-size:0.66rem;color:var(--text-muted);">${formatDateBR(e.data)} · ${escapeHtml((cat && cat.nome) || '')}</span></span><span class="val">${fmtBRL(e.valor)}</span></div>`;
+  }).join('') : '<div class="empty-state" style="padding:10px 0;">Nada lançado neste período.</div>';
+}
+document.getElementById('dashYear').addEventListener('change', renderDashboard);
+document.getElementById('dashMonth').addEventListener('change', renderDashboard);
 
 /* ---------- Service worker: registro + banner de atualização ---------- */
 function setupServiceWorker() {

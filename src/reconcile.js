@@ -169,6 +169,12 @@ export function autoConfirmParcelas(faturaRows, expenses, dataCorte, categories)
     }
     if (!candidate && !(row.parcela_atual > 1)) continue; // parcela 1 de verdade: precisa confirmação manual
 
+    // Sem candidato previsto (ex.: previsão "pulou" o vencimento real), ainda vale procurar um
+    // lançamento REAL já existente com a mesma identidade — outra parcela dessa mesma compra
+    // que o usuário já classificou antes — pra herdar a categoria dela em vez de cair em
+    // "A Classificar" à toa.
+    const irmaoReal = !candidate ? expenses.find((e) => !e.previsto && e.parcelaKey === key) : null;
+
     const descricaoBase = (candidate ? candidate.descricao : row.descricao).replace(/\s*\(parcela prevista\)\s*$/i, '');
     const newId = `confirmed_${key.replace(/[^a-zA-Z0-9]/g, '_')}_${row.vencimento}`;
     if (candidate) {
@@ -180,7 +186,7 @@ export function autoConfirmParcelas(faturaRows, expenses, dataCorte, categories)
       descricao: descricaoBase,
       valor: row.valor,
       data: dataCorte || row.vencimento,
-      categoria: candidate ? candidate.categoria : (catId || 'outros'),
+      categoria: candidate ? candidate.categoria : (irmaoReal ? irmaoReal.categoria : catId),
       previsto: false,
       conciliadoAutomaticamente: true,
       parcela_atual: row.parcela_atual,

@@ -32,6 +32,7 @@
       <button class="tab-btn active" data-tab="Lancamentos">Lançamentos</button>
       <button class="tab-btn" data-tab="Conciliacao">Conciliação</button>
       <button class="tab-btn" data-tab="Parcelas">Parcelas</button>
+      <button class="tab-btn" data-tab="Dashboard">Dashboard</button>
     </div>
 
     <!-- ===== TAB LANÇAMENTOS ===== -->
@@ -138,6 +139,47 @@
       <div class="parcelas-intro">Com base nas parcelas em aberto, esta previsão mostra <strong>em qual fatura futura</strong> cada valor vai aparecer. Essas parcelas já são pré-lançadas automaticamente (marcadas como "parcela prevista") e conciliadas sozinhas assim que a fatura daquele mês chega.</div>
       <div class="month-forecast-table" id="monthForecast"></div>
       <div id="parcelasList"></div>
+    </div>
+
+    <!-- ===== TAB DASHBOARD ===== -->
+    <div class="tab-panel" id="tabDashboard">
+      <div class="dash-filters">
+        <select id="dashYear"></select>
+        <select id="dashMonth">
+          <option value="">Ano inteiro</option>
+          <option value="0">Janeiro</option>
+          <option value="1">Fevereiro</option>
+          <option value="2">Março</option>
+          <option value="3">Abril</option>
+          <option value="4">Maio</option>
+          <option value="5">Junho</option>
+          <option value="6">Julho</option>
+          <option value="7">Agosto</option>
+          <option value="8">Setembro</option>
+          <option value="9">Outubro</option>
+          <option value="10">Novembro</option>
+          <option value="11">Dezembro</option>
+        </select>
+      </div>
+      <div class="dash-stats">
+        <div class="dash-stat"><div class="label">Total no período</div><div class="value" id="dashTotal">R$ 0,00</div></div>
+        <div class="dash-stat"><div class="label">Vs. período anterior</div><div class="value" id="dashDelta">—</div></div>
+      </div>
+      <div class="dash-block">
+        <div class="rc-group-title" style="margin-top:0;">Por categoria</div>
+        <div class="dash-donut-wrap">
+          <div class="donut" id="dashDonut"></div>
+          <div class="dash-legend" id="dashLegend"></div>
+        </div>
+      </div>
+      <div class="dash-block">
+        <div class="rc-group-title" style="margin-top:0;">Totais por mês</div>
+        <div class="dash-bars" id="dashBars"></div>
+      </div>
+      <div class="dash-block">
+        <div class="rc-group-title" style="margin-top:0;">Maiores gastos no período</div>
+        <div id="dashTop5"></div>
+      </div>
     </div>
   </div>
 </div>
