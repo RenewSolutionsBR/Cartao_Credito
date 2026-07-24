@@ -36,17 +36,50 @@ function normalizeDescLoose(s) { return String(s || '').trim().toUpperCase().rep
 
 // Antes de criar uma compra parcelada "do zero" (checkbox de Lançamentos), verifica se ela já
 // tem algo ligado no app — por identidade exata (mesma chave) ou por uma pista mais fraca: uma
-// linha de fatura já importada com descrição parecida e parcela_atual > 1, o que prova que a
-// compra já vinha de antes (a fatura já deve ter conciliado alguma parcela dela sozinha) e não
-// deveria ser recomeçada do zero como "1/N" — evita duplicar o que a conciliação já criou.
-function findParcelaDuplicates(desc, data, n) {
+// linha de fatura já importada com parcela_atual > 1, descrição parecida, valor de parcela bem
+// próximo do que está sendo lançado agora e data de compra próxima da escolhida. As três
+// condições juntas (não só a descrição) evitam disparar aviso pra qualquer compra homônima não
+// relacionada — comerciantes recorrentes (assinaturas, lojas visitadas várias vezes) geram
+// várias linhas de parcelamento genuinamente diferentes com a mesma descrição ao longo do
+// tempo, cada uma com seu próprio valor e data.
+function findParcelaDuplicates(desc, data, n, valorParcela) {
   const key = computeParcelaKey(desc, data, n);
   const normDesc = normalizeDescLoose(desc);
   const fuzzyRows = allFaturaRows().filter((r) => r.tipo === 'parcelamento' && r.parcela_atual > 1 &&
+    Math.abs(r.valor - valorParcela) < 0.05 &&
+    Math.abs((new Date(r.data + 'T00:00:00') - new Date(data + 'T00:00:00')) / 86400000) <= 15 &&
     (normalizeDescLoose(r.descricao).includes(normDesc) || normDesc.includes(normalizeDescLoose(r.descricao))));
   const fuzzyKeys = new Set(fuzzyRows.map((r) => computeParcelaKey(r.descricao, r.data, r.parcela_total)));
   const matches = expenses.filter((e) => e.parcelaKey === key || (e.parcelaKey && fuzzyKeys.has(e.parcelaKey)));
   return matches;
+}
+
+// Modal próprio (não window.confirm, que só tem OK/Cancelar) com três saídas: apagar os
+// lançamentos antigos e criar os novos no lugar, criar os novos mantendo os antigos (o usuário
+// decide depois, caso o aviso tenha sido um falso positivo), ou desistir de lançar.
+function showDupWarnModal(matches) {
+  return new Promise((resolve) => {
+    const overlay = document.getElementById('dupOverlay');
+    document.getElementById('dupList').innerHTML = matches
+      .map((m) => `<div class="dup-row">• ${escapeHtml(m.descricao)} — ${formatDateBR(m.data)} — ${fmtBRL(m.valor)}</div>`).join('');
+    overlay.classList.add('show');
+    const apagarBtn = document.getElementById('dupApagarBtn');
+    const manterBtn = document.getElementById('dupManterBtn');
+    const cancelBtn = document.getElementById('dupCancelBtn');
+    function cleanup(result) {
+      overlay.classList.remove('show');
+      apagarBtn.removeEventListener('click', onApagar);
+      manterBtn.removeEventListener('click', onManter);
+      cancelBtn.removeEventListener('click', onCancel);
+      resolve(result);
+    }
+    function onApagar() { cleanup('apagar'); }
+    function onManter() { cleanup('manter'); }
+    function onCancel() { cleanup('cancelar'); }
+    apagarBtn.addEventListener('click', onApagar);
+    manterBtn.addEventListener('click', onManter);
+    cancelBtn.addEventListener('click', onCancel);
+  });
 }
 
 // Quando o usuário classifica (ou reclassifica) uma parcela, propaga a categoria pras outras
@@ -327,17 +360,19 @@ document.getElementById('submitBtn').addEventListener('click', async () => {
       if (isNaN(total)) { setStatus('Valor total inválido — use vírgula ou ponto, ex: 1200,00.'); return; }
       if (!n || n < 2) { setStatus('Número de parcelas precisa ser 2 ou mais.'); return; }
 
-      const duplicatas = findParcelaDuplicates(desc, data, n);
+      const vals = splitParcelas(total, n);
+
+      const duplicatas = findParcelaDuplicates(desc, data, n, vals[0]);
       if (duplicatas.length) {
-        const resumo = duplicatas.slice(0, 5).map((m) => `• ${m.descricao} — ${formatDateBR(m.data)} — ${fmtBRL(m.valor)}`).join('\n');
-        const ok = window.confirm(`Já existe(m) ${duplicatas.length} lançamento(s) ligado(s) a uma compra parecida (provavelmente já conciliada pela fatura):\n\n${resumo}\n\nSe continuar, esses lançamentos serão apagados e substituídos pelos ${n} que você está criando agora. Deseja continuar?`);
-        if (!ok) { setStatus('Cancelado — já existe uma compra parecida lançada.'); return; }
-        const idsRemover = new Set(duplicatas.map((m) => m.id));
-        expenses = expenses.filter((e) => !idsRemover.has(e.id));
-        await Promise.all([...idsRemover].map((id) => storage.remove('expenses', id)));
+        const resultado = await showDupWarnModal(duplicatas);
+        if (resultado === 'cancelar') { setStatus('Cancelado — já existe uma compra parecida lançada.'); return; }
+        if (resultado === 'apagar') {
+          const idsRemover = new Set(duplicatas.map((m) => m.id));
+          expenses = expenses.filter((e) => !idsRemover.has(e.id));
+          await Promise.all([...idsRemover].map((id) => storage.remove('expenses', id)));
+        }
       }
 
-      const vals = splitParcelas(total, n);
       const grupoId = 'grp_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
       const parcelaKey = computeParcelaKey(desc, data, n);
       const novos = [];

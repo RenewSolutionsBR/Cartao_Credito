@@ -162,12 +162,22 @@ automaticamente à sua, e você corre o risco de ter dois lançamentos para a me
 (um criado por você, outro pela conciliação automática da fatura).
 
 **Se isso acontecer** (você lançar uma compra parcelada pelo checkbox e ela já estava — ou
-vier a estar — na fatura): ao criar o lançamento parcelado, o app tenta perceber a
-coincidência (mesma descrição parecida já aparecendo na fatura com parcela maior que 1) e
-avisa antes de salvar, oferecendo apagar o que a fatura já tinha criado em favor do que
-você está lançando agora. Ainda assim, esse aviso não cobre 100% dos casos (descrições
-muito diferentes das da fatura podem passar despercebidas) — o caminho mais seguro
-continua sendo usar sempre "+ lançar" para compras que já estão na fatura.
+vier a estar — na fatura): ao criar o lançamento, o app tenta perceber a coincidência
+(mesma descrição parecida, valor de parcela bem próximo, data de compra próxima, já
+aparecendo na fatura com parcela maior que 1) e mostra uma tela de aviso antes de salvar,
+com três opções:
+
+- **"Continuar e apagar os antigos"** — remove os lançamentos encontrados e cria os novos
+  no lugar (use quando for realmente a mesma compra).
+- **"Continuar sem apagar"** — cria os novos mesmo assim, mantendo os antigos intactos
+  (use se o aviso foi engano — ex.: duas compras diferentes na mesma loja, coincidência
+  de valor).
+- **"Cancelar"** — não lança nada, volta pro formulário preenchido.
+
+Esse aviso é uma pista, não uma certeza absoluta — se a compra realmente parecida tiver
+descrição, valor ou data muito diferentes do que a fatura registrou, ele pode não
+disparar. O caminho mais seguro continua sendo usar sempre "+ lançar" para compras que já
+estão na fatura.
 
 **Despesas avulsas (não parceladas) não têm esse problema**: um gasto simples lançado à
 mão só cria UM registro, e a conciliação com a fatura é sempre recalculada na hora (não

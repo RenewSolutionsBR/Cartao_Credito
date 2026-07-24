@@ -199,6 +199,21 @@
   </div>
 </div>
 
+<!-- Aviso de possível duplicidade ao lançar compra parcelada manual -->
+<div class="dup-overlay" id="dupOverlay">
+  <div class="dup-card">
+    <h2>Compra parecida já lançada</h2>
+    <p>Achei lançamento(s) que parecem ser a mesma compra (provavelmente já conciliada pela fatura):</p>
+    <div id="dupList"></div>
+    <p>Você pode apagar os antigos e ficar só com os novos, manter os dois (se for coincidência) e resolver depois, ou cancelar este lançamento.</p>
+    <div class="dup-actions">
+      <button type="button" class="dup-btn apagar" id="dupApagarBtn">Continuar e apagar os antigos</button>
+      <button type="button" class="dup-btn manter" id="dupManterBtn">Continuar sem apagar</button>
+      <button type="button" class="dup-btn cancelar" id="dupCancelBtn">Cancelar</button>
+    </div>
+  </div>
+</div>
+
 <div class="update-banner" id="updateBanner">
   <span>Nova versão do app disponível.</span>
   <button type="button" id="updateBtn">Atualizar</button>

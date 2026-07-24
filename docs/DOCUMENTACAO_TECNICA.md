@@ -163,11 +163,18 @@ uma confirmação vinda de uma fatura real.
 
 **Checagem de duplicidade** (`findParcelaDuplicates`): antes de criar os N registros,
 verifica (a) se já existe algum `expense` com a mesma `parcelaKey` exata, e (b) uma
-checagem mais fraca — linhas de fatura já importadas com descrição parecida (substring,
-case-insensitive) e `parcela_atual > 1`, o que indica que a compra já vinha de antes. Se
-achar algo, mostra um `confirm()` oferecendo apagar os registros existentes antes de
-criar os novos. É uma heurística, não uma garantia — descrições muito diferentes da
-digitada pelo banco não são pegas.
+checagem mais fraca — linhas de fatura já importadas com `parcela_atual > 1` E as três
+condições juntas: descrição parecida (substring, case-insensitive), valor de parcela a
+menos de R$ 0,05 do que está sendo lançado, e data de compra a até 15 dias da escolhida.
+As três juntas (não só a descrição) evitam falso positivo com comerciantes recorrentes —
+a primeira versão dessa checagem usava só a descrição e disparava para QUALQUER compra
+homônima antiga (ex.: duas compras "EVINO" diferentes, meses e valores diferentes,
+acionavam o aviso uma pra outra). Se achar algo, abre `showDupWarnModal` (overlay próprio
+em `#dupOverlay`, não `window.confirm` — precisa de 3 saídas, que um `confirm()` nativo
+não oferece): **apagar e continuar** (remove os registros encontrados antes de criar os
+novos), **continuar sem apagar** (cria os novos e mantém os antigos, para quando o aviso
+foi falso positivo) ou **cancelar** (não cria nada). É uma heurística, não uma garantia —
+descrições/valores/datas muito diferentes dos da fatura não são pegos.
 
 **Propagação de categoria** (`syncCategoriaAcrossParcelas`): toda vez que uma categoria é
 definida/alterada num lançamento com `parcelaKey` (edição de um existente, ou criação de
