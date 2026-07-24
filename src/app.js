@@ -12,6 +12,7 @@ const DEFAULT_CATEGORIES = [
   { id: 'pessoal', nome: 'Pessoal', cor: '#6E7FB0' },
   { id: 'parcelamentos', nome: 'Parcelamentos', cor: '#9C8248' },
   { id: 'outros', nome: 'Outros', cor: '#8A8578' },
+  { id: 'a_classificar', nome: 'A Classificar', cor: '#B0413E' },
 ];
 const PALETTE = ['#7A8B69', '#5B7C99', '#B2694F', '#8B6B8F', '#C9A227', '#8A8578', '#5C8B8B', '#A65A5A', '#6E7FB0', '#9C8248'];
 
@@ -69,6 +70,11 @@ async function loadAll() {
   if (categories.length === 0) {
     categories = DEFAULT_CATEGORIES.map((c) => ({ ...c }));
     await storage.putMany('categories', categories);
+  } else if (!categories.some((c) => c.id === 'a_classificar')) {
+    // migração: apps já em uso antes desta categoria existir não a recebem no primeiro load
+    const novaCat = { id: 'a_classificar', nome: 'A Classificar', cor: '#B0413E' };
+    categories.push(novaCat);
+    await storage.put('categories', novaCat);
   }
   faturasList = await storage.getAll('faturas');
   renderCategorySelect(); renderCatPanel(); renderDescList(); render();
@@ -85,6 +91,7 @@ async function loadAll() {
 
 function clearReconciliationView() {
   document.getElementById('rcSummary').classList.remove('show');
+  document.getElementById('rcFaturaTotal').classList.remove('show');
   document.getElementById('rcAutoN').textContent = '0';
   document.getElementById('rcOkN').textContent = '0';
   document.getElementById('rcFaturaN').textContent = '0';
@@ -293,15 +300,24 @@ document.getElementById('submitBtn').addEventListener('click', async () => {
       if (!n || n < 2) { setStatus('Número de parcelas precisa ser 2 ou mais.'); return; }
       const vals = splitParcelas(total, n);
       const grupoId = 'grp_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+      const parcelaKey = computeParcelaKey(desc, data, n);
       const novos = [];
       for (let i = 0; i < n; i++) {
+        // Só a parcela 1 vira lançamento real agora — as demais são "previsto" (mesmo
+        // tratamento das parcelas que vêm de fatura), pra não competir por casamento de valor
+        // na aba Conciliação com a parcela real do mês em curso, e pra a conciliação automática
+        // (por parcelaKey) já saber reconhecê-las quando a fatura de cada mês futuro chegar.
         novos.push({
           id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7) + i,
-          descricao: `${desc} (${i + 1}/${n})`,
+          descricao: i === 0 ? desc : `${desc} (parcela prevista)`,
           valor: vals[i],
           data: addMonthsClamped(data, i),
           categoria,
           grupo_parcela: grupoId,
+          parcelaKey,
+          parcela_atual: i + 1,
+          parcela_total: n,
+          ...(i === 0 ? {} : { previsto: true, origemManual: true }),
         });
       }
       expenses.push(...novos);
@@ -655,6 +671,11 @@ function displayReconciliation(vencimento) {
   const { autoMatched, matched, faturaUnmatched, appUnmatched } = runReconciliation(vencimento, faturasList, expenses);
   const faturaObj = faturasList.find((f) => f.vencimento === vencimento);
   const dataParcelaManual = (faturaObj && faturaObj.dataCorte) || vencimento;
+
+  const faturaTotal = faturaObj ? faturaObj.rows.reduce((s, r) => s + r.valor, 0) : 0;
+  const totalEl = document.getElementById('rcFaturaTotal');
+  totalEl.innerHTML = `Total da fatura: <span class="n">${fmtBRL(faturaTotal)}</span>`;
+  totalEl.classList.add('show');
 
   document.getElementById('rcSummary').classList.add('show');
   document.getElementById('rcAutoN').textContent = autoMatched.length;

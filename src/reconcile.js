@@ -47,7 +47,7 @@ export function computeParcelaGroups(allFaturaRows) {
     const months = [];
     for (let k = 1; k <= remaining; k++) {
       const dt = addMonths(r.vencimento, k);
-      months.push({ ym: ymOf(dt), label: dt.toLocaleDateString('pt-BR', { month: 'short', year: 'numeric' }), valor: r.valor });
+      months.push({ ym: ymOf(dt), label: dt.toLocaleDateString('pt-BR', { month: 'short', year: 'numeric' }), valor: r.valor, numero: r.parcela_atual + k });
     }
     groups.push({ key: r.key, descricao: r.descricao, dataCompraOriginal: r.data, valor: r.valor, parcela_atual: r.parcela_atual, parcela_total: r.parcela_total, remaining, totalRestante: remaining * r.valor, months });
   }
@@ -66,9 +66,20 @@ export function computeParcelaGroups(allFaturaRows) {
  */
 export function syncPredictions(allFaturaRows, existingExpenses, categories) {
   const groups = computeParcelaGroups(allFaturaRows);
-  const catId = (categories.find((c) => c.nome.toLowerCase() === 'parcelamentos') || {}).id;
+  const catId = (categories.find((c) => c.id === 'a_classificar') || {}).id || 'outros';
+  // Se já existe um lançamento real (não previsto) da mesma compra — ex.: o usuário confirmou
+  // a parcela 1 via "+lançar" e escolheu uma categoria de verdade —, as previsões das parcelas
+  // seguintes herdam essa categoria em vez de cair em "A Classificar", que é só pra quando a
+  // fatura documenta a compra antes de qualquer lançamento do usuário existir.
+  const categoriaPorKey = new Map();
+  existingExpenses.forEach((e) => { if (!e.previsto && e.parcelaKey && e.categoria) categoriaPorKey.set(e.parcelaKey, e.categoria); });
 
-  const toRemoveIds = existingExpenses.filter((e) => e.previsto).map((e) => e.id);
+  // Previsões nascidas de um lançamento parcelado manual (origemManual: true — feito pelo
+  // usuário antes de qualquer fatura documentar essa compra) não vêm de computeParcelaGroups
+  // (que só enxerga linhas de fatura já importada), então nunca seriam regeneradas aqui. Por
+  // isso ficam de fora da limpeza: sobrevivem intactas até serem substituídas de verdade pela
+  // confirmação automática quando a fatura real chegar (autoConfirmParcelas cuida disso à parte).
+  const toRemoveIds = existingExpenses.filter((e) => e.previsto && !e.origemManual).map((e) => e.id);
 
   const toAdd = [];
   groups.forEach((g) => {
@@ -79,9 +90,11 @@ export function syncPredictions(allFaturaRows, existingExpenses, categories) {
         descricao: `${g.descricao} (parcela prevista)`,
         valor: m.valor,
         data: m.ym + '-01',
-        categoria: catId || 'outros',
+        categoria: categoriaPorKey.get(g.key) || catId,
         previsto: true,
         parcelaKey: g.key,
+        parcela_atual: m.numero,
+        parcela_total: g.parcela_total,
       });
     });
   });
@@ -139,7 +152,11 @@ export function autoConfirmParcelas(faturaRows, expenses, dataCorte, categories)
   const confirmed = [];
   const removedIds = [];
   const usedIds = new Set();
-  const catId = categories ? (categories.find((c) => c.nome.toLowerCase() === 'parcelamentos') || {}).id : null;
+  // "A Classificar": categoria usada só quando a fatura confirma uma parcela que o usuário
+  // nunca lançou manualmente antes (sem candidato previsto) — sem isso, cairia sempre em
+  // "Parcelamentos", que não ajuda a fazer gestão por tipo de gasto. Quando existe candidato
+  // (lançamento manual prévio), a categoria escolhida pelo usuário é sempre preservada.
+  const catId = (categories && (categories.find((c) => c.id === 'a_classificar') || {}).id) || 'outros';
 
   for (const row of faturaRows) {
     if (row.tipo !== 'parcelamento') continue;

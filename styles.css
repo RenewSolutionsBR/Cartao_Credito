@@ -82,6 +82,9 @@ form.entry-form .full{grid-column:1 / -1;}
 .reconcile-select{ padding:14px 20px; border-bottom:1px dashed var(--paper-line); display:none; }
 .reconcile-select.show{display:block;}
 .reconcile-select select{ width:100%; padding:9px 10px; border:1px solid var(--paper-line); border-radius:4px; font-size:0.9rem; background:#fff; }
+.rc-fatura-total{ display:none; padding:14px 20px 0; font-size:0.85rem; color:var(--text-dark); }
+.rc-fatura-total.show{ display:block; }
+.rc-fatura-total .n{ font-family:var(--font-mono); font-weight:700; font-size:1rem; }
 .reconcile-summary{ display:none; gap:8px; padding:14px 20px 4px; flex-wrap:wrap; }
 .reconcile-summary.show{display:flex;}
 .rc-badge{ flex:1; min-width:90px; text-align:center; padding:10px 6px; border-radius:6px; font-size:0.68rem; letter-spacing:0.02em; }
