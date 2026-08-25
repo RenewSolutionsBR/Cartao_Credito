@@ -1,7 +1,8 @@
 // Service worker: cache versionado do app inteiro (shell + libs vendorizadas), pra rodar
 // 100% offline depois do primeiro load, com um fluxo de atualização que não troca a versão
 // no meio de uma sessão em uso (só depois que o usuário toca em "Atualizar").
-const CACHE_VERSION = 'livro-de-gastos-v13';
+const PREFIXO_CACHE = 'cartao-credito-';
+const CACHE_VERSION = `${PREFIXO_CACHE}v14`;
 
 const PRECACHE_URLS = [
   './',
@@ -30,7 +31,13 @@ self.addEventListener('install', (event) => {
 self.addEventListener('activate', (event) => {
   event.waitUntil((async () => {
     const names = await caches.keys();
-    await Promise.all(names.filter((n) => n !== CACHE_VERSION).map((n) => caches.delete(n)));
+    // Só apaga cache DESTE app: os dois PWAs dividem a origem
+    // renewsolutionsbr.github.io e o Cache Storage é por origem, então
+    // um filtro sem prefixo apagaria o cache offline do outro app.
+    await Promise.all(
+      names.filter((n) => n.startsWith(PREFIXO_CACHE) && n !== CACHE_VERSION)
+           .map((n) => caches.delete(n))
+    );
     await self.clients.claim();
   })());
 });

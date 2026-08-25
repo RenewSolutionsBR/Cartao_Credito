@@ -1,6 +1,6 @@
 {
-  "name": "Livro de Gastos",
-  "short_name": "Gastos",
+  "name": "Cartão de Crédito",
+  "short_name": "Cartão",
   "description": "Controle de gastos e conciliação de fatura de cartão, com dados salvos só no seu celular.",
   "start_url": "./index.html",
   "scope": "./",

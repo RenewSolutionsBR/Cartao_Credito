@@ -1,4 +1,4 @@
-# Livro de Gastos
+# Cartão de Crédito
 
 App de controle de gastos e conciliação de fatura de cartão (Santander Visa), como PWA
 instalável no celular. Sucessor do `gastos-app.html` que rodava como artefato no chat do
@@ -72,7 +72,7 @@ parser contra um PDF, sem mexer nos dados salvos do app.
    ```
    git init
    git add .
-   git commit -m "Livro de Gastos: PWA inicial"
+   git commit -m "Cartão de Crédito: PWA inicial"
    git branch -M main
    git remote add origin https://github.com/SEU_USUARIO/SEU_REPOSITORIO.git
    git push -u origin main
